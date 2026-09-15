@@ -74,6 +74,14 @@
         @keyframes slideUp { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        /* App pensada solo para uso vertical: en horizontal (celular acostado)
+           se tapa el contenido con un aviso en vez de mostrar el layout roto. */
+        #landscape-lock { display: none; }
+        @media (orientation: landscape) and (max-height: 600px) {
+            #root { display: none; }
+            #landscape-lock { display: flex; }
+        }
     </style>
 </head>
 <body class="pb-24 text-slate-800">
@@ -81,6 +89,12 @@
     <div id="error-box" style="display: none; background-color: #fee2e2; border: 2px solid #ef4444; color: #7f1d1d; padding: 20px; margin: 20px; border-radius: 12px; font-family: monospace; z-index: 9999; position: relative;">
         <h2 style="margin-top: 0; font-size: 18px; font-weight: bold;">🚨 Diagnóstico de Sistema</h2>
         <p id="error-message"></p>
+    </div>
+
+    <div id="landscape-lock" style="position: fixed; inset: 0; background: #0f172a; color: white; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px; z-index: 9998;">
+        <div style="font-size: 48px; margin-bottom: 12px;">📱</div>
+        <p style="font-weight: 700; font-size: 15px;">Girá tu celular a modo vertical</p>
+        <p style="font-size: 13px; color: #94a3b8; margin-top: 4px;">Esta app está pensada para usarse así</p>
     </div>
 
     <div id="root"></div>
@@ -2078,9 +2092,9 @@
                     <div className="min-h-screen flex flex-col max-w-md mx-auto bg-slate-50 relative shadow-2xl">
                         <header className="bg-slate-900 text-white px-4 py-3 sticky top-0 z-20 shadow-md">
                             <div className="flex justify-between items-center mb-2">
-                                <div className="font-black text-xl text-blue-400 tracking-tight flex items-center gap-1.5">
-                                    <span className="bg-blue-600 text-white rounded-lg px-2 py-0.5 leading-none">E</span>
-                                    scuelita Bicentenario Log
+                                <div className="font-black text-lg text-white tracking-tight flex items-center gap-2 min-w-0">
+                                    <span className="bg-blue-600 text-white rounded-lg w-7 h-7 flex items-center justify-center text-sm shrink-0">E</span>
+                                    <span className="truncate">Escuelita Log</span>
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold uppercase ${currentUser.role === 'admin' ? 'bg-amber-500 text-slate-900' : currentUser.role === 'medico' ? 'bg-indigo-600 text-white' : 'bg-blue-600 text-white'}`}>

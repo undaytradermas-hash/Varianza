@@ -1,0 +1,14 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ponytail: esto es "todo o nada" — cualquier usuario logueado (alumno,
+    // médico o admin) puede leer y escribir cualquier colección. No hay
+    // backend (Cloud Functions) para validar por rol server-side, así que
+    // permisos más finos (ej. "un médico solo puede calificar a sus propios
+    // alumnos") quedan como límite conocido, reforzados solo en la UI.
+    // Lo que sí resuelve: nadie no autenticado puede leer o tocar nada.
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

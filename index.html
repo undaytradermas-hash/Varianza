@@ -1,0 +1,2142 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Escuelita Bicentenario Log - Registro Médico</title>
+
+    <!-- ========================================================================= -->
+    <!-- 1. CAPTURADOR DE ERRORES DE RED Y CDNs (Inyectado primero que nada)       -->
+    <!-- ========================================================================= -->
+    <script>
+        window.addEventListener('error', function (e) {
+            if (e.target && (e.target.tagName === 'SCRIPT' || e.target.tagName === 'LINK')) {
+                const resource = e.target.src || e.target.href;
+                document.title = '🚨 CDN BLOQUEADO';
+                console.error('Fallo al cargar recurso:', resource);
+
+                window.addEventListener('DOMContentLoaded', () => {
+                    const errorBox = document.getElementById('error-box');
+                    const errorMsg = document.getElementById('error-message');
+                    if (errorBox && errorMsg) {
+                        errorBox.style.display = 'block';
+                        errorMsg.innerHTML += `<br/><b>❌ Recurso Bloqueado:</b> No se pudo cargar <code>${resource}</code>.<br/><span style="color:#b91c1c; font-size: 14px;">👉 <b>Posible Solución:</b> Si usas un bloqueador de anuncios (AdBlock, uBlock, Brave Shield), desactívalo para esta página. Si estás en una red corporativa/hospital, prueba usar los datos del celular.</span><br/>`;
+                    }
+                });
+            }
+        }, true);
+
+        window.onerror = function(message, source, lineno, colno, error) {
+            window.addEventListener('DOMContentLoaded', () => {
+                const errorBox = document.getElementById('error-box');
+                const errorMsg = document.getElementById('error-message');
+                if (errorBox && errorMsg) {
+                    errorBox.style.display = 'block';
+                    errorMsg.innerHTML += `<br/><b>⚠️ Error de Ejecución (Línea ${lineno}):</b> ${message}<br/>`;
+                }
+            });
+        };
+    </script>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Fuentes -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+    <!-- Firebase SDK (Compat v10) -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; -webkit-tap-highlight-color: transparent; }
+        ::-webkit-scrollbar { display: none; }
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        .slide-up { animation: slideUp 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideUp { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="pb-24 text-slate-800">
+
+    <div id="error-box" style="display: none; background-color: #fee2e2; border: 2px solid #ef4444; color: #7f1d1d; padding: 20px; margin: 20px; border-radius: 12px; font-family: monospace; z-index: 9999; position: relative;">
+        <h2 style="margin-top: 0; font-size: 18px; font-weight: bold;">🚨 Diagnóstico de Sistema</h2>
+        <p id="error-message"></p>
+    </div>
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        try {
+            // =========================================================================
+            // CONFIGURACIÓN E INICIALIZACIÓN DE FIREBASE
+            // =========================================================================
+            const firebaseConfig = {
+                apiKey: "AIzaSyD7ktfW2NuxJv50vZzVpqkDXFy7ZropNqI",
+                authDomain: "escuelita-bicentenario-log.firebaseapp.com",
+                projectId: "escuelita-bicentenario-log",
+                storageBucket: "escuelita-bicentenario-log.firebasestorage.app",
+                messagingSenderId: "975611820154",
+                appId: "1:975611820154:web:6c2ef8768d9ef478f723c3",
+                measurementId: "G-ZPKF8RKKHS"
+            };
+
+            if (typeof window.firebase === "undefined") {
+                throw new Error("El SDK de Firebase no cargó correctamente. Verifica tu conexión a internet o bloqueadores de anuncios.");
+            }
+
+            if (!firebase.apps.length) {
+                firebase.initializeApp(firebaseConfig);
+            }
+            const db = firebase.firestore();
+            const auth = firebase.auth();
+
+            // El login usa DNI, pero Firebase Auth necesita un "email". Se arma uno
+            // interno (no se envía correo real) para no tocar la UX de DNI+contraseña.
+            const dniToPseudoEmail = (dni) => `${(dni || '').replace(/\D/g, '')}@escuelita-bicentenario-log.local`;
+
+            // Crear un usuario nuevo (alta hecha por Admin/Médico) sin cerrar la sesión
+            // de quien está logueado: Firebase Auth loguea automáticamente a cualquier
+            // cuenta recién creada en la app que la crea, así que se usa una instancia
+            // secundaria de Firebase solo para el alta.
+            // ponytail: sin backend (Cloud Functions) esta es la forma más simple de
+            // crear cuentas ajenas desde el cliente sin perder la sesión del admin.
+            const createAuthAccountWithoutSignIn = async (dni, password) => {
+                const secondaryApp = firebase.apps.find(a => a.name === 'Secondary') || firebase.initializeApp(firebaseConfig, 'Secondary');
+                const secondaryAuth = secondaryApp.auth();
+                await secondaryAuth.createUserWithEmailAndPassword(dniToPseudoEmail(dni), password);
+                await secondaryAuth.signOut();
+            };
+
+            // =========================================================================
+            // INICIO DE LA APLICACIÓN REACT
+            // =========================================================================
+            const { useState, useMemo, useEffect, useRef } = React;
+
+            class ErrorBoundary extends React.Component {
+                constructor(props) {
+                    super(props);
+                    this.state = { hasError: false, errorMessage: '' };
+                }
+                static getDerivedStateFromError(error) {
+                    return { hasError: true, errorMessage: error.toString() };
+                }
+                componentDidCatch(error, errorInfo) {
+                    console.error("Error en React:", error, errorInfo);
+                }
+                render() {
+                    if (this.state.hasError) {
+                        return (
+                            <div className="p-8 text-center">
+                                <div className="bg-rose-100 border-2 border-rose-500 text-rose-800 p-6 rounded-2xl inline-block max-w-lg">
+                                    <h1 className="font-bold text-xl mb-2">💥 Fallo de Renderizado</h1>
+                                    <p className="font-mono text-sm break-words">{this.state.errorMessage}</p>
+                                </div>
+                            </div>
+                        );
+                    }
+                    return this.props.children;
+                }
+            }
+
+            const Icons = {
+                Dashboard: <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>,
+                Plus: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>,
+                Report: <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>,
+                CheckCircle: <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-500"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>,
+                XCircle: <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-rose-500"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>,
+                User: <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>,
+                Clock: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>,
+                Shield: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>,
+                Book: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>,
+                Activity: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>,
+                Award: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="7"></circle><polyline points="8.21 13.89 7 22 12 19 17 22 15.79 13.88"></polyline></svg>,
+                Mic: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>,
+                Headphones: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"></path><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path></svg>,
+                Calendar: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>,
+                Lock: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>,
+                FaceId: <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><path d="M9 9h.01"></path><path d="M15 9h.01"></path><path d="M10 13a2 2 0 0 0 4 0"></path><path d="M12 17h.01"></path></svg>,
+                LogOut: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>,
+                Procedure: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>,
+                WhatsApp: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>,
+                Mail: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>,
+                Trash: <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>,
+                RefreshCw: <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+            };
+
+            const DEFAULT_ACTIVITIES_CONFIG = {
+                planta: [
+                    { id: 'p_uti', name: 'Planta UTI', points: 1, type: 'daily' },
+                    { id: 'p_er', name: 'Planta ER', points: 0.8, type: 'daily' },
+                    { id: 'p_don', name: 'Proceso Donación', points: 0.8, type: 'count' }
+                ],
+                guardia: [
+                    { id: 'g_bicen_24', name: 'Guardia Bicentenario (24hs)', points: 2, hospital: 'Bicentenario', hours: 24 },
+                    { id: 'g_bicen_12', name: 'Guardia Bicentenario (12hs)', points: 1, hospital: 'Bicentenario', hours: 12 },
+                    { id: 'g_otro_24', name: 'Guardia Otro Hospital (24hs)', points: 0.4, hospital: 'Externo', hours: 24 },
+                    { id: 'g_otro_12', name: 'Guardia Otro Hospital (12hs)', points: 0.2, hospital: 'Externo', hours: 12 }
+                ],
+                clases_dictadas: [
+                    { id: 'cd_simple', name: 'Clase simple', points: 1 },
+                    { id: 'cd_ppt', name: 'Clase con PPT', points: 2 },
+                    { id: 'cd_ppt_quest', name: 'Clase con PPT y cuestionario', points: 3 }
+                ],
+                clases_escuchadas: [
+                    { id: 'ce_dictada', name: 'Clase escuchada de compañero', points: 1 },
+                    { id: 'ce_lectura', name: 'Lectura de artículo / tema', points: 1 }
+                ],
+                otras_actividades: [
+                    { id: 'oa_choices', name: 'Choices / Cuestionarios', points: 1 },
+                    { id: 'oa_exam', name: 'Exámenes de cursos', points: 2 },
+                    { id: 'oa_jorn_d', name: 'Días en jornadas/congresos', points: 1 },
+                    { id: 'oa_jorn_p', name: 'Presentación en jornadas', points: 1 },
+                    { id: 'oa_taller', name: 'Preparación de Taller', points: 3 }
+                ],
+                gestion: [
+                    { id: 'gest_0', name: 'No lo hice', points: 0 },
+                    { id: 'gest_1', name: 'Solo junté los datos', points: 1 },
+                    { id: 'gest_2', name: 'Lo hice y lo subí', points: 2 },
+                    { id: 'gest_3', name: 'Lo hice, lo subí y lo presenté', points: 3 }
+                ]
+            };
+
+            const GOALS = [
+                { id: 'g_planta', name: 'Días de Planta / Guardia (Requerido: 13 pts)', requiredPoints: 13, category: 'planta' },
+                { id: 'g_guardias', name: 'Días de Guardia (Requerido: 4 pts)', requiredPoints: 4, category: 'guardia' },
+                { id: 'g_procedimientos', name: 'Procedimientos (Requerido: 3 pts)', requiredPoints: 3, category: 'procedimientos' },
+                { id: 'g_academico', name: 'Actividades Académicas (Requerido: 15 pts)', requiredPoints: 15, category: 'academica' },
+                { id: 'g_clase', name: 'Clase Dictada Obligatoria', requiredPoints: 1, category: 'clase_prep' },
+                { id: 'g_gestion', name: 'Indicadores y Gestión (Requerido: 3 pts)', requiredPoints: 3, category: 'gestion' },
+                { id: 'g_medico', name: 'Evaluación Médico de Planta (> 4 pts)', requiredPoints: 5, category: 'evaluacion_medico' }
+            ];
+
+            const today = new Date();
+            const currentYear = today.getFullYear();
+            const currentMonthNum = today.getMonth() + 1;
+            const currentMonthYYYYMM = `${currentYear}-${String(currentMonthNum).padStart(2, '0')}`;
+
+            const lastMonthNum = currentMonthNum === 1 ? 12 : currentMonthNum - 1;
+            const lastMonthYear = currentMonthNum === 1 ? currentYear - 1 : currentYear;
+            const lastMonthYYYYMM = `${lastMonthYear}-${String(lastMonthNum).padStart(2, '0')}`;
+
+            const getMonthName = (yyyymm) => {
+                if (!yyyymm) return '';
+                const [year, month] = yyyymm.split('-');
+                const date = new Date(year, month - 1, 1);
+                return date.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' }).replace(/^\w/, c => c.toUpperCase());
+            };
+
+            const getAllActivitiesFlat = (config, customProcedures = []) => {
+                return [
+                    ...config.planta,
+                    ...config.guardia,
+                    ...customProcedures,
+                    ...config.clases_dictadas,
+                    ...config.clases_escuchadas,
+                    ...config.otras_actividades,
+                    ...config.gestion
+                ];
+            };
+
+            const getMonthProgress = (residentId, yyyymm, logsList, evaluations, proceduresList = [], config) => {
+                const monthLogs = logsList.filter(l => l.residentId === residentId && l.date.startsWith(yyyymm) && !l.anulado);
+                const allActs = getAllActivitiesFlat(config, proceduresList);
+
+                let isApproved = true;
+                const missing = [];
+
+                const evalKey = `${residentId}_${yyyymm}`;
+                const evalObj = evaluations[evalKey];
+                const staffScore = typeof evalObj === 'object' ? (evalObj?.score || 0) : (Number(evalObj) || 0);
+
+                const gestIds = config.gestion.map(a => a.id);
+
+                const goalsProgress = GOALS.map(goal => {
+                    let currentPoints = 0;
+
+                    if (goal.category === 'planta') {
+                        const plantaActsIds = config.planta.map(a => a.id);
+                        const plantaPts = monthLogs.filter(l => plantaActsIds.includes(l.activityId)).reduce((sum, l) => {
+                            const act = allActs.find(a => a.id === l.activityId);
+                            return sum + (act ? act.points * l.qty : 0);
+                        }, 0);
+
+                        const guardiaActsIds = config.guardia.map(a => a.id);
+                        const guardiaPts = monthLogs.filter(l => guardiaActsIds.includes(l.activityId)).reduce((sum, l) => {
+                            const act = allActs.find(a => a.id === l.activityId);
+                            return sum + (act ? act.points * l.qty : 0);
+                        }, 0);
+
+                        currentPoints = plantaPts + guardiaPts;
+                    } else if (goal.category === 'guardia') {
+                        const actsIds = config.guardia.map(a => a.id);
+                        currentPoints = monthLogs.filter(l => actsIds.includes(l.activityId)).reduce((sum, l) => {
+                            const act = allActs.find(a => a.id === l.activityId);
+                            return sum + (act ? act.points * l.qty : 0);
+                        }, 0);
+                    } else if (goal.category === 'procedimientos') {
+                        const procIds = proceduresList.map(a => a.id);
+                        currentPoints = monthLogs.filter(l => procIds.includes(l.activityId)).reduce((sum, l) => {
+                            const act = proceduresList.find(a => a.id === l.activityId);
+                            return sum + (act ? act.points * l.qty : 0);
+                        }, 0);
+                    } else if (goal.category === 'academica') {
+                        const acadActs = [...config.clases_dictadas, ...config.clases_escuchadas, ...config.otras_actividades].map(a => a.id);
+                        currentPoints = monthLogs.filter(l => acadActs.includes(l.activityId)).reduce((sum, l) => {
+                            const act = allActs.find(a => a.id === l.activityId);
+                            return sum + (act ? act.points * l.qty : 0);
+                        }, 0);
+                    } else if (goal.category === 'clase_prep') {
+                        const dictadasIds = config.clases_dictadas.map(a => a.id);
+                        currentPoints = monthLogs.filter(l => dictadasIds.includes(l.activityId)).reduce((sum, l) => sum + l.qty, 0);
+                    } else if (goal.category === 'gestion') {
+                        const gestLogs = monthLogs.filter(l => gestIds.includes(l.activityId));
+                        if (gestLogs.length > 0) {
+                            const scores = gestLogs.map(l => {
+                                const act = allActs.find(a => a.id === l.activityId);
+                                return act ? act.points : 0;
+                            });
+                            currentPoints = Math.max(...scores);
+                        } else {
+                            currentPoints = 0;
+                        }
+                    } else if (goal.category === 'evaluacion_medico') {
+                        currentPoints = staffScore;
+                    }
+
+                    const roundedPoints = Math.round(currentPoints * 100) / 100;
+
+                    if (goal.category === 'evaluacion_medico') {
+                        if (staffScore <= 4) {
+                            isApproved = false;
+                            const reason = staffScore === 0 ? 'Pendiente (habilitada desde el día 25)' : 'Puntaje <= 4 (otorgado: ' + staffScore + ')';
+                            missing.push({ name: 'Evaluación del Médico de Planta', lacking: reason });
+                        }
+                    } else if (goal.requiredPoints > 0 && roundedPoints < goal.requiredPoints) {
+                        isApproved = false;
+                        missing.push({ name: goal.name, lacking: Math.round((goal.requiredPoints - roundedPoints) * 100) / 100 });
+                    }
+
+                    return { ...goal, currentPoints: roundedPoints };
+                });
+
+                let totalPointsOverall = 0;
+                const nonGestLogs = monthLogs.filter(l => !gestIds.includes(l.activityId));
+                nonGestLogs.forEach(l => {
+                    const act = allActs.find(a => a.id === l.activityId);
+                    if (act) totalPointsOverall += (act.points * l.qty);
+                });
+
+                const gestLogs = monthLogs.filter(l => gestIds.includes(l.activityId));
+                if (gestLogs.length > 0) {
+                    const maxGestScore = Math.max(...gestLogs.map(l => {
+                        const act = allActs.find(a => a.id === l.activityId);
+                        return act ? act.points : 0;
+                    }));
+                    totalPointsOverall += maxGestScore;
+                }
+
+                totalPointsOverall += staffScore;
+
+                return {
+                    isApproved,
+                    totalPointsOverall: Math.round(totalPointsOverall * 100) / 100,
+                    goalsProgress,
+                    missing,
+                    staffScore
+                };
+            };
+
+            const calculateResidentApprovedMonthsCount = (resident, logsList, evaluations, proceduresList = [], config) => {
+                const months = new Set(logsList.filter(l => l.residentId === resident.id).map(l => l.date.substring(0, 7)));
+                let countFromSystem = 0;
+                months.forEach(month => {
+                    if (getMonthProgress(resident.id, month, logsList, evaluations, proceduresList, config).isApproved) {
+                        countFromSystem++;
+                    }
+                });
+                return (resident.mesesPreviosAprobados || 0) + countFromSystem;
+            };
+
+            const getRequiredActivityPts = () => {
+                return GOALS.filter(g => g.category !== 'evaluacion_medico').reduce((sum, g) => sum + g.requiredPoints, 0);
+            };
+
+            const ProgressBar = ({ label, current, required }) => {
+                const percentage = Math.min(100, Math.round((current / required) * 100));
+                const isComplete = current >= required;
+
+                return (
+                    <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 mb-3 slide-up">
+                        <div className="flex justify-between items-center mb-2">
+                            <span className="font-semibold text-slate-700 text-sm">{label}</span>
+                            <div className="flex items-center gap-2">
+                                <span className={`text-sm font-bold ${isComplete ? 'text-emerald-600' : 'text-slate-600'}`}>
+                                    {current} / {required} pts
+                                </span>
+                                {isComplete && Icons.CheckCircle}
+                            </div>
+                        </div>
+                        <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+                            <div
+                                className={`h-2.5 rounded-full transition-all duration-1000 ease-out ${isComplete ? 'bg-emerald-500' : 'bg-blue-500'}`}
+                                style={{ width: `${percentage}%` }}
+                            ></div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const DashboardView = ({ currentResident, currentMonthYYYYMM, logs, evaluations, procedures, onUpdateProfile, medicosPlanta, config }) => {
+                const [isEditingProfile, setIsEditingProfile] = useState(false);
+                const [profileForm, setProfileForm] = useState({ universidad: '', mail: '', celular: '', tipo: 'Residente', medicoPlanta: '' });
+
+                const openEditProfile = () => {
+                    setProfileForm({
+                        universidad: currentResident.universidad || '',
+                        mail: currentResident.mail || '',
+                        celular: currentResident.celular || '',
+                        tipo: currentResident.tipo || 'Residente',
+                        medicoPlanta: currentResident.medicoPlanta || ''
+                    });
+                    setIsEditingProfile(true);
+                };
+
+                const handleProfileFieldChange = (field, value) => {
+                    setProfileForm(prev => ({ ...prev, [field]: value }));
+                };
+
+                const handleProfileSubmit = (e) => {
+                    e.preventDefault();
+                    onUpdateProfile(currentResident.id, profileForm);
+                    setIsEditingProfile(false);
+                };
+
+                const progressData = getMonthProgress(currentResident.id, currentMonthYYYYMM, logs, evaluations, procedures, config);
+                const totalApprovedMonths = calculateResidentApprovedMonthsCount(currentResident, logs, evaluations, procedures, config);
+
+                const getYearTheme = (months) => {
+                    if (months <= 12) return { name: 'Año 1 (R1)', bg: 'bg-blue-600', text: 'text-blue-600', bar: 'bg-blue-500', label: 'Primer Año' };
+                    if (months <= 24) return { name: 'Año 2 (R2)', bg: 'bg-emerald-600', text: 'text-emerald-600', bar: 'bg-emerald-500', label: 'Segundo Año' };
+                    if (months <= 36) return { name: 'Año 3 (R3)', bg: 'bg-amber-600', text: 'text-amber-600', bar: 'bg-amber-500', label: 'Tercer Año' };
+                    return { name: 'Año 4 (R4)', bg: 'bg-purple-600', text: 'text-purple-600', bar: 'bg-purple-500', label: 'Cuarto Año' };
+                };
+
+                const yearTheme = getYearTheme(totalApprovedMonths);
+                const overallPercentage = Math.min(100, Math.round((totalApprovedMonths / 48) * 100));
+
+                const todayDay = new Date().getDate();
+                const totalActivityPts = progressData.totalPointsOverall - progressData.staffScore;
+                const requiredActivityPts = getRequiredActivityPts();
+                const completionPercent = Math.min(100, Math.round((totalActivityPts / requiredActivityPts) * 100));
+                const isUnder75Percent = todayDay >= 25 && completionPercent < 75;
+
+                const cleanPhone = (currentResident.celular || '').replace(/\D/g, '');
+                const waMessage = encodeURIComponent(`Hola ${currentResident.nombre}, te recordamos que al día ${todayDay} registras un ${completionPercent}% del puntaje mensual requerido (${totalActivityPts}/${requiredActivityPts} pts). Por favor completa tus cargas en Escuelita Bicentenario Log.`);
+                const waUrl = cleanPhone ? `https://wa.me/549${cleanPhone}?text=${waMessage}` : '#';
+                const mailSubject = encodeURIComponent(`Alerta de Rendimiento Mensual - Escuelita Bicentenario Log`);
+                const mailBody = encodeURIComponent(`Estimado/a ${currentResident.nombre} ${currentResident.apellido},\n\nAl día ${todayDay} del mes registras ${totalActivityPts} de ${requiredActivityPts} puntos requeridos (${completionPercent}%). Te solicitamos ingresar a la aplicación y registrar las actividades faltantes.\n\nAtentamente,\nEscuelita Bicentenario Log`);
+                const mailUrl = currentResident.mail ? `mailto:${currentResident.mail}?subject=${mailSubject}&body=${mailBody}` : '#';
+
+                return (
+                    <div className="p-4 fade-in">
+                        {isUnder75Percent && (
+                            <div className="bg-rose-50 border-2 border-rose-300 rounded-2xl p-4 mb-4 shadow-sm slide-up">
+                                <div className="flex items-start gap-2.5">
+                                    <span className="text-2xl">⚠️</span>
+                                    <div className="flex-1">
+                                        <h3 className="font-extrabold text-xs text-rose-900 uppercase tracking-wide">
+                                            Alerta de Avance Mensual (Día 25)
+                                        </h3>
+                                        <p className="text-xs font-semibold text-rose-800 mt-0.5">
+                                            Llevas <span className="font-black text-rose-950 underline">{completionPercent}%</span> del puntaje requerido ({totalActivityPts} / {requiredActivityPts} pts). Estás por debajo del 75% estipulado para esta fecha del mes.
+                                        </p>
+
+                                        <div className="flex flex-wrap gap-2 mt-3">
+                                            {currentResident.celular && (
+                                                <a
+                                                    href={waUrl}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-xl text-[11px] flex items-center gap-1.5 shadow-sm"
+                                                >
+                                                    {Icons.WhatsApp} Notificar WhatsApp
+                                                </a>
+                                            )}
+                                            {currentResident.mail && (
+                                                <a
+                                                    href={mailUrl}
+                                                    className="bg-slate-800 hover:bg-slate-900 text-white font-bold px-3 py-1.5 rounded-xl text-[11px] flex items-center gap-1.5 shadow-sm"
+                                                >
+                                                    {Icons.Mail} Notificar Email
+                                                </a>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="bg-gradient-to-br from-slate-900 to-indigo-950 rounded-2xl p-6 text-white mb-6 shadow-lg relative overflow-hidden">
+                            <div className="relative z-10">
+                                <div className="flex justify-between items-start mb-2">
+                                    <div>
+                                        <h2 className="text-xs opacity-75 font-semibold tracking-wide uppercase">Resumen del Mes Actual</h2>
+                                        <h1 className="text-2xl font-black">{currentResident.nombre} {currentResident.apellido}</h1>
+                                    </div>
+                                    <span className={`text-xs px-2.5 py-1 rounded-full font-bold uppercase ${yearTheme.bg} text-white`}>
+                                        {yearTheme.name}
+                                    </span>
+                                </div>
+
+                                <div className="text-xs opacity-90 mb-4 flex flex-wrap gap-2 items-center">
+                                    <span className="bg-white/10 px-2.5 py-1 rounded-md">{currentResident.tipo}</span>
+                                    <span className="bg-white/10 px-2.5 py-1 rounded-md">{currentResident.universidad}</span>
+                                    <span className="bg-white/10 px-2.5 py-1 rounded-md">Burbuja: {currentResident.burbuja}</span>
+                                    <span className="bg-white/10 px-2.5 py-1 rounded-md font-bold text-blue-200">Docente a cargo: {currentResident.medicoPlanta || 'Sin Asignar'}</span>
+                                    <button type="button" onClick={openEditProfile} className="bg-blue-600 hover:bg-blue-700 px-2.5 py-1 rounded-md font-bold text-[11px] shadow-sm transition-all">Editar mis datos</button>
+                                </div>
+
+                                <div className="flex justify-between items-center bg-white/10 p-3 rounded-xl backdrop-blur-md">
+                                    <div>
+                                        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-300">Puntos Válidos Mes Actual</div>
+                                        <div className="text-2xl font-black text-amber-400">{progressData.totalPointsOverall} pts</div>
+                                    </div>
+                                    <div className="text-right">
+                                        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-300">Evaluación Docente</div>
+                                        <div className="text-lg font-bold text-white">{progressData.staffScore > 0 ? `${progressData.staffScore} / 10 pts` : 'Pendiente'}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 mb-6 slide-up">
+                            <div className="flex justify-between items-center mb-2">
+                                <div>
+                                    <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
+                                        {Icons.Award} Progreso General de Formación
+                                    </h3>
+                                    <p className="text-xs text-slate-500">
+                                        {totalApprovedMonths} de 48 meses aprobados ({yearTheme.label})
+                                    </p>
+                                </div>
+                                <span className={`text-xs px-2.5 py-1 rounded-full font-bold uppercase ${yearTheme.bg} text-white`}>
+                                        {yearTheme.name}
+                                </span>
+                            </div>
+                            <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+                                <div
+                                    className={`h-3 rounded-full transition-all duration-1000 ease-out ${yearTheme.bar}`}
+                                    style={{ width: `${overallPercentage}%` }}
+                                ></div>
+                            </div>
+                            <div className="flex justify-between items-center mt-2 text-[10px] text-slate-400 font-semibold">
+                                <span>R1 (1-12m)</span>
+                                <span>R2 (13-24m)</span>
+                                <span>R3 (25-36m)</span>
+                                <span>R4 (37-48m)</span>
+                            </div>
+                        </div>
+
+                        <div className="space-y-3">
+                            <h3 className="font-bold text-slate-800 text-sm mb-3">Requisitos del Mes ({getMonthName(currentMonthYYYYMM)})</h3>
+                            {progressData.goalsProgress.map(goal => (
+                                <ProgressBar key={goal.id} label={goal.name} current={goal.currentPoints} required={goal.requiredPoints} />
+                            ))}
+                        </div>
+
+                        {isEditingProfile && (
+                            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 fade-in">
+                                <form onSubmit={handleProfileSubmit} className="bg-white rounded-2xl p-6 max-w-sm w-full space-y-3 shadow-2xl">
+                                    <h3 className="font-bold text-slate-900 text-base border-b pb-2">Editar Mis Datos</h3>
+                                    <div>
+                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Universidad</label>
+                                        <input type="text" value={profileForm.universidad} onChange={e => handleProfileFieldChange('universidad', e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Mail</label>
+                                        <input type="email" value={profileForm.mail} onChange={e => handleProfileFieldChange('mail', e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Celular</label>
+                                        <input type="tel" value={profileForm.celular} onChange={e => handleProfileFieldChange('celular', e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm" />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Tipo</label>
+                                            <select value={profileForm.tipo} onChange={e => handleProfileFieldChange('tipo', e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm font-bold">
+                                                <option value="Residente">Residente</option><option value="Concurrente">Concurrente</option><option value="Rotante">Rotante</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Médico a Cargo</label>
+                                            <select value={profileForm.medicoPlanta} onChange={e => handleProfileFieldChange('medicoPlanta', e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm font-bold text-blue-700">
+                                                <option value="">-- Sin Asignar --</option>
+                                                {medicosPlanta.map(m => <option key={m} value={m}>{m}</option>)}
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-2 pt-2">
+                                        <button type="button" onClick={() => setIsEditingProfile(false)} className="flex-1 bg-slate-100 font-bold p-3 rounded-xl text-xs">Cancelar</button>
+                                        <button type="submit" className="flex-1 bg-blue-600 text-white font-bold p-3 rounded-xl text-xs">Guardar</button>
+                                    </div>
+                                </form>
+                            </div>
+                        )}
+                    </div>
+                );
+            };
+
+            const LogActivityView = ({ currentResident, onAddLog, publishedClasses, onPublishClass, logs, isUserDisabled, procedures, config }) => {
+                const [activeSubTab, setActiveSubTab] = useState('planta');
+
+                const [plantaActivityId, setPlantaActivityId] = useState(config.planta[0]?.id || '');
+                const [timeIn, setTimeIn] = useState('08:00');
+                const [timeOut, setTimeOut] = useState('16:00');
+                const [plantaDate, setPlantaDate] = useState(new Date().toISOString().split('T')[0]);
+                const [plantaError, setPlantaError] = useState('');
+
+                const todayStr = useMemo(() => {
+                    const d = new Date();
+                    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                }, []);
+
+                const minPlantaDateStr = useMemo(() => {
+                    const d = new Date();
+                    d.setDate(d.getDate() - 7);
+                    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                }, []);
+
+                const [guardiaActivityId, setGuardiaActivityId] = useState(config.guardia[0]?.id || '');
+                const [service, setService] = useState('Terapia Intensiva');
+                const [guardiaDate, setGuardiaDate] = useState(new Date().toISOString().split('T')[0]);
+
+                const [selectedProcedureId, setSelectedProcedureId] = useState(procedures[0]?.id || '');
+                const [procedureQty, setProcedureQty] = useState(1);
+                const [procedureDate, setProcedureDate] = useState(new Date().toISOString().split('T')[0]);
+
+                const [dictadaType, setDictadaType] = useState('cd_simple');
+                const [classNameInput, setClassNameInput] = useState('');
+                const [dictadaDate, setDictadaDate] = useState(new Date().toISOString().split('T')[0]);
+
+                const [escuchadaMode, setEscuchadaMode] = useState('class');
+                const [selectedPublishedClassId, setSelectedPublishedClassId] = useState('');
+                const [lecturaTopic, setLecturaTopic] = useState('');
+                const [escuchadaDate, setEscuchadaDate] = useState(new Date().toISOString().split('T')[0]);
+
+                const [otraActivityId, setOtraActivityId] = useState(config.otras_actividades[0]?.id || '');
+                const [otraQty, setOtraQty] = useState(1);
+                const [otraDate, setOtraDate] = useState(new Date().toISOString().split('T')[0]);
+
+                const [indicadorName, setIndicadorName] = useState('');
+                const [gestActivityId, setGestActivityId] = useState(config.gestion[0]?.id || '');
+                const [gestTargetMonth, setGestTargetMonth] = useState(currentMonthYYYYMM);
+                const [gestDate, setGestDate] = useState(new Date().toISOString().split('T')[0]);
+
+                useEffect(() => {
+                    if (procedures.length > 0 && !selectedProcedureId) {
+                        setSelectedProcedureId(procedures[0].id);
+                    }
+                }, [procedures]);
+
+                useEffect(() => {
+                    if (config.planta.length > 0 && !plantaActivityId) setPlantaActivityId(config.planta[0].id);
+                    if (config.guardia.length > 0 && !guardiaActivityId) setGuardiaActivityId(config.guardia[0].id);
+                    if (config.otras_actividades.length > 0 && !otraActivityId) setOtraActivityId(config.otras_actividades[0].id);
+                    if (config.gestion.length > 0 && !gestActivityId) setGestActivityId(config.gestion[0].id);
+                }, [config]);
+
+                const recentClasses = useMemo(() => {
+                    const now = new Date();
+                    const sevenDaysAgo = new Date(now.setDate(now.getDate() - 7));
+                    return publishedClasses.filter(c => new Date(c.date) >= sevenDaysAgo && c.instructorId !== currentResident.id);
+                }, [publishedClasses, currentResident]);
+
+                const triggerFeedback = (btnId) => {
+                    const btn = document.getElementById(btnId);
+                    if (btn) {
+                        const original = btn.innerText;
+                        btn.classList.add('bg-emerald-600');
+                        btn.innerText = '¡Registrado con éxito!';
+                        setTimeout(() => {
+                            btn.classList.remove('bg-emerald-600');
+                            btn.innerText = original;
+                        }, 1500);
+                    }
+                };
+
+                const handlePlantaSubmit = (e) => {
+                    e.preventDefault();
+                    if (isUserDisabled) return;
+
+                    if (plantaDate < minPlantaDateStr) {
+                        setPlantaError('La asistencia a actividad de planta solo puede registrarse hasta 7 días posteriores a la fecha en que se realizó.');
+                        return;
+                    }
+                    if (plantaDate > todayStr) {
+                        setPlantaError('No se puede registrar una fecha futura.');
+                        return;
+                    }
+                    setPlantaError('');
+
+                    onAddLog({ residentId: currentResident.id, activityId: plantaActivityId, qty: 1, date: plantaDate, timeIn, timeOut });
+                    triggerFeedback('btn-planta');
+                };
+
+                const handleGuardiaSubmit = (e) => {
+                    e.preventDefault();
+                    if (isUserDisabled) return;
+                    onAddLog({ residentId: currentResident.id, activityId: guardiaActivityId, qty: 1, date: guardiaDate, service });
+                    triggerFeedback('btn-guardia');
+                };
+
+                const handleProcedureSubmit = (e) => {
+                    e.preventDefault();
+                    if (isUserDisabled || !selectedProcedureId) return;
+                    const proc = procedures.find(p => p.id === selectedProcedureId);
+                    onAddLog({
+                        residentId: currentResident.id,
+                        activityId: selectedProcedureId,
+                        qty: procedureQty,
+                        date: procedureDate,
+                        procedureName: proc ? proc.name : 'Procedimiento',
+                        complexity: proc ? proc.complexity : 'baja'
+                    });
+                    triggerFeedback('btn-proc');
+                };
+
+                const handleDictadaSubmit = (e) => {
+                    e.preventDefault();
+                    if (isUserDisabled || !classNameInput.trim()) return;
+
+                    const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+                    onAddLog({
+                        residentId: currentResident.id,
+                        activityId: dictadaType,
+                        qty: 1,
+                        date: dictadaDate,
+                        className: classNameInput,
+                        time: nowTime
+                    });
+
+                    onPublishClass({
+                        id: 'class_' + Date.now(),
+                        title: classNameInput,
+                        instructorId: currentResident.id,
+                        instructorName: `${currentResident.nombre} ${currentResident.apellido}`,
+                        date: dictadaDate,
+                        time: nowTime
+                    });
+
+                    setClassNameInput('');
+                    triggerFeedback('btn-dictada');
+                };
+
+                const handleEscuchadaSubmit = (e) => {
+                    e.preventDefault();
+                    if (isUserDisabled) return;
+                    if (escuchadaMode === 'class') {
+                        if (!selectedPublishedClassId) return;
+                        const pubClass = publishedClasses.find(c => c.id === selectedPublishedClassId);
+
+                        onAddLog({
+                            residentId: currentResident.id,
+                            activityId: 'ce_dictada',
+                            qty: 1,
+                            date: escuchadaDate,
+                            className: pubClass ? pubClass.title : 'Clase escuchada'
+                        });
+                    } else {
+                        onAddLog({
+                            residentId: currentResident.id,
+                            activityId: 'ce_lectura',
+                            qty: 1,
+                            date: escuchadaDate,
+                            topic: lecturaTopic
+                        });
+                        setLecturaTopic('');
+                    }
+                    triggerFeedback('btn-escuchada');
+                };
+
+                const handleOtraSubmit = (e) => {
+                    e.preventDefault();
+                    if (isUserDisabled) return;
+                    onAddLog({ residentId: currentResident.id, activityId: otraActivityId, qty: otraQty, date: otraDate });
+                    triggerFeedback('btn-otra');
+                };
+
+                const handleGestSubmit = (e) => {
+                    e.preventDefault();
+                    if (isUserDisabled) return;
+
+                    let finalDate = gestDate;
+                    if (!finalDate.startsWith(gestTargetMonth)) {
+                        finalDate = `${gestTargetMonth}-28`;
+                    }
+
+                    onAddLog({
+                        residentId: currentResident.id,
+                        activityId: gestActivityId,
+                        qty: 1,
+                        date: finalDate,
+                        indicatorName: indicadorName || 'Indicador de Gestión'
+                    });
+                    setIndicadorName('');
+                    triggerFeedback('btn-gest');
+                };
+
+                return (
+                    <div className="p-4 fade-in">
+                        <div className="mb-4">
+                            <h2 className="text-2xl font-bold text-slate-800">Cargar Actividad</h2>
+                            <p className="text-slate-500 text-xs">Selecciona la solapa correspondiente para registrar tus actividades.</p>
+                        </div>
+
+                        {isUserDisabled && (
+                            <div className="bg-rose-50 border-2 border-rose-300 text-rose-800 p-4 rounded-2xl mb-4 font-bold text-xs flex items-center gap-2 slide-up shadow-sm">
+                                <span className="text-xl">⛔</span>
+                                <div>
+                                    <div className="text-sm font-extrabold text-rose-900">Usuario Inhabilitado</div>
+                                    <p className="font-normal text-rose-700">Tu cuenta se encuentra inhabilitada por el Administrador. No puedes registrar nuevas actividades.</p>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="flex gap-1 bg-slate-200 p-1.5 rounded-xl mb-4 text-xs font-semibold overflow-x-auto no-scrollbar">
+                            <button type="button" onClick={() => setActiveSubTab('planta')} className={`px-3 py-2 rounded-lg whitespace-nowrap transition-all flex items-center gap-1.5 ${activeSubTab === 'planta' ? 'bg-white text-blue-600 shadow-sm font-bold' : 'text-slate-600'}`}>{Icons.Clock} Planta</button>
+                            <button type="button" onClick={() => setActiveSubTab('guardia')} className={`px-3 py-2 rounded-lg whitespace-nowrap transition-all flex items-center gap-1.5 ${activeSubTab === 'guardia' ? 'bg-white text-blue-600 shadow-sm font-bold' : 'text-slate-600'}`}>{Icons.Shield} Guardia</button>
+                            <button type="button" onClick={() => setActiveSubTab('procedimientos')} className={`px-3 py-2 rounded-lg whitespace-nowrap transition-all flex items-center gap-1.5 ${activeSubTab === 'procedimientos' ? 'bg-white text-blue-600 shadow-sm font-bold' : 'text-slate-600'}`}>{Icons.Procedure} Procedimientos</button>
+                            <button type="button" onClick={() => setActiveSubTab('clases_dictadas')} className={`px-3 py-2 rounded-lg whitespace-nowrap transition-all flex items-center gap-1.5 ${activeSubTab === 'clases_dictadas' ? 'bg-white text-blue-600 shadow-sm font-bold' : 'text-slate-600'}`}>{Icons.Mic} Clases Dictadas</button>
+                            <button type="button" onClick={() => setActiveSubTab('clases_escuchadas')} className={`px-3 py-2 rounded-lg whitespace-nowrap transition-all flex items-center gap-1.5 ${activeSubTab === 'clases_escuchadas' ? 'bg-white text-blue-600 shadow-sm font-bold' : 'text-slate-600'}`}>{Icons.Headphones} Escuchadas / Lecturas</button>
+                            <button type="button" onClick={() => setActiveSubTab('gestion')} className={`px-3 py-2 rounded-lg whitespace-nowrap transition-all flex items-center gap-1.5 ${activeSubTab === 'gestion' ? 'bg-white text-blue-600 shadow-sm font-bold' : 'text-slate-600'}`}>{Icons.Activity} Gestión</button>
+                            <button type="button" onClick={() => setActiveSubTab('otras_actividades')} className={`px-3 py-2 rounded-lg whitespace-nowrap transition-all flex items-center gap-1.5 ${activeSubTab === 'otras_actividades' ? 'bg-white text-blue-600 shadow-sm font-bold' : 'text-slate-600'}`}>{Icons.Book} Otras Actividades</button>
+                        </div>
+
+                        {/* Vistas de Solapas de Carga */}
+                        {activeSubTab === 'planta' && (
+                            <form onSubmit={handlePlantaSubmit} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4 slide-up">
+                                <h3 className="font-bold text-slate-800 border-b pb-2">Asistencia Diaria de Planta</h3>
+                                {plantaError && <div className="bg-rose-50 border border-rose-200 text-rose-700 text-xs p-3 rounded-xl font-semibold slide-up">{plantaError}</div>}
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Servicio de Planta</label>
+                                    <select value={plantaActivityId} onChange={e => setPlantaActivityId(e.target.value)} disabled={isUserDisabled} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-medium outline-none disabled:opacity-50">
+                                        {config.planta.map(a => <option key={a.id} value={a.id}>{a.name} ({a.points} pts)</option>)}
+                                    </select>
+                                </div>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Hora Ingreso</label>
+                                        <input type="time" value={timeIn} onChange={e => setTimeIn(e.target.value)} required disabled={isUserDisabled} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-medium outline-none disabled:opacity-50" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Hora Egreso</label>
+                                        <input type="time" value={timeOut} onChange={e => setTimeOut(e.target.value)} required disabled={isUserDisabled} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-medium outline-none disabled:opacity-50" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Fecha</label>
+                                    <input type="date" value={plantaDate} min={minPlantaDateStr} max={todayStr} onChange={e => { setPlantaDate(e.target.value); setPlantaError(''); }} required disabled={isUserDisabled} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-medium outline-none disabled:opacity-50" />
+                                    <p className="text-[10px] text-slate-400 mt-1 font-semibold">* La asistencia diaria puede registrarse hasta con 7 días de posterioridad.</p>
+                                </div>
+                                <button id="btn-planta" type="submit" disabled={isUserDisabled} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold p-4 rounded-xl transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed">Registrar Planta</button>
+                            </form>
+                        )}
+
+                        {activeSubTab === 'guardia' && (
+                            <form onSubmit={handleGuardiaSubmit} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4 slide-up">
+                                <h3 className="font-bold text-slate-800 border-b pb-2">Registro de Guardia</h3>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Duración e Institución</label>
+                                    <select value={guardiaActivityId} onChange={e => setGuardiaActivityId(e.target.value)} disabled={isUserDisabled} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-medium outline-none disabled:opacity-50">
+                                        {config.guardia.map(a => <option key={a.id} value={a.id}>{a.name} ({a.points} pts)</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Servicio Asignado</label>
+                                    <select value={service} onChange={e => setService(e.target.value)} disabled={isUserDisabled} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-medium outline-none disabled:opacity-50">
+                                        <option value="Terapia Intensiva">Terapia Intensiva (UTI)</option>
+                                        <option value="Emergencias">Emergencias (ER)</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Fecha</label>
+                                    <input type="date" value={guardiaDate} onChange={e => setGuardiaDate(e.target.value)} required disabled={isUserDisabled} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-medium outline-none disabled:opacity-50" />
+                                </div>
+                                <button id="btn-guardia" type="submit" disabled={isUserDisabled} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold p-4 rounded-xl transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed">Registrar Guardia</button>
+                            </form>
+                        )}
+
+                        {activeSubTab === 'procedimientos' && (
+                            <form onSubmit={handleProcedureSubmit} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4 slide-up">
+                                <div className="border-b pb-2">
+                                    <h3 className="font-bold text-slate-800 flex items-center gap-1.5">{Icons.Procedure} Procedimientos Realizados</h3>
+                                    <p className="text-xs text-slate-500">Selecciona el procedimiento médico/quirúrgico efectuado en el servicio.</p>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Procedimiento</label>
+                                    {procedures.length === 0 ? (
+                                        <p className="text-xs text-slate-400 bg-slate-50 p-3 rounded-xl border border-slate-200 font-medium">No hay procedimientos disponibles. Un Médico de Planta o Administrador puede agregar nuevos.</p>
+                                    ) : (
+                                        <select value={selectedProcedureId} onChange={e => setSelectedProcedureId(e.target.value)} required disabled={isUserDisabled} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-bold outline-none disabled:opacity-50 cursor-pointer">
+                                            {procedures.map(p => (
+                                                <option key={p.id} value={p.id}>{p.name} — [{p.complexity === 'alta' ? 'Alta Complejidad' : 'Baja Complejidad'} - {p.points} pts]</option>
+                                            ))}
+                                        </select>
+                                    )}
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Cantidad Realizada</label>
+                                    <input type="number" min="1" max="20" value={procedureQty} onChange={e => setProcedureQty(parseInt(e.target.value) || 1)} required disabled={isUserDisabled} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-bold text-center outline-none disabled:opacity-50" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Fecha</label>
+                                    <input type="date" value={procedureDate} onChange={e => setProcedureDate(e.target.value)} required disabled={isUserDisabled} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-medium outline-none disabled:opacity-50" />
+                                </div>
+                                <button id="btn-proc" type="submit" disabled={isUserDisabled || procedures.length === 0} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold p-4 rounded-xl transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed">Registrar Procedimiento</button>
+                            </form>
+                        )}
+
+                        {activeSubTab === 'clases_dictadas' && (
+                            <form onSubmit={handleDictadaSubmit} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4 slide-up">
+                                <div className="border-b pb-2">
+                                    <h3 className="font-bold text-slate-800">Registrar Clase Dictada</h3>
+                                    <p className="text-xs text-slate-500">Quedará disponible automáticamente para que tus compañeros la registren como escuchada.</p>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Nombre o Tema de la Clase</label>
+                                    <input type="text" placeholder="Ej. Cetoacidosis Diabética en UTI" value={classNameInput} onChange={e => setClassNameInput(e.target.value)} required disabled={isUserDisabled} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-medium outline-none disabled:opacity-50" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Modalidad de Clase Dictada</label>
+                                    <div className="space-y-2">
+                                        {config.clases_dictadas.map(a => (
+                                            <label key={a.id} className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${dictadaType === a.id ? 'border-blue-500 bg-blue-50/50' : 'border-slate-200'}`}>
+                                                <div className="flex items-center gap-2">
+                                                    <input type="radio" name="dictada_type" value={a.id} checked={dictadaType === a.id} onChange={() => setDictadaType(a.id)} disabled={isUserDisabled} className="text-blue-600" />
+                                                    <span className="text-sm font-semibold text-slate-700">{a.name}</span>
+                                                </div>
+                                                <span className="text-xs font-black text-blue-600 bg-blue-100 px-2.5 py-1 rounded-lg">+{a.points} pts</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Fecha</label>
+                                    <input type="date" value={dictadaDate} onChange={e => setDictadaDate(e.target.value)} required disabled={isUserDisabled} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-medium outline-none disabled:opacity-50" />
+                                </div>
+                                <button id="btn-dictada" type="submit" disabled={isUserDisabled} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold p-4 rounded-xl transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed">Publicar y Registrar Clase</button>
+                            </form>
+                        )}
+
+                        {activeSubTab === 'clases_escuchadas' && (
+                            <form onSubmit={handleEscuchadaSubmit} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4 slide-up">
+                                <div className="border-b pb-2">
+                                    <h3 className="font-bold text-slate-800">Clases Escuchadas y Lecturas</h3>
+                                    <p className="text-xs text-slate-500">Selecciona clases dictadas en los últimos 7 días o registra lecturas de papers.</p>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl text-xs font-bold">
+                                    <button type="button" onClick={() => setEscuchadaMode('class')} className={`py-2 rounded-lg transition-all ${escuchadaMode === 'class' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Clase de Compañero</button>
+                                    <button type="button" onClick={() => setEscuchadaMode('lecture')} className={`py-2 rounded-lg transition-all ${escuchadaMode === 'lecture' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Lectura de Tema</button>
+                                </div>
+                                {escuchadaMode === 'class' ? (
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Clases Dictadas (Últimos 7 días)</label>
+                                        {recentClasses.length === 0 ? (
+                                            <p className="text-xs text-amber-700 bg-amber-50 p-3 rounded-xl border border-amber-200 font-medium">No hay clases dictadas por otros residentes registradas en los últimos 7 días.</p>
+                                        ) : (
+                                            <select value={selectedPublishedClassId} onChange={e => setSelectedPublishedClassId(e.target.value)} required disabled={isUserDisabled} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-medium outline-none disabled:opacity-50">
+                                                <option value="">-- Seleccionar clase dictada --</option>
+                                                {recentClasses.map(c => <option key={c.id} value={c.id}>"{c.title}" - Dictada por {c.instructorName} ({c.date})</option>)}
+                                            </select>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Tema o Paper Leído</label>
+                                        <input type="text" placeholder="Ej. Guías Surviving Sepsis Campaign 2023" value={lecturaTopic} onChange={e => setLecturaTopic(e.target.value)} required disabled={isUserDisabled} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-medium outline-none disabled:opacity-50" />
+                                    </div>
+                                )}
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Fecha</label>
+                                    <input type="date" value={escuchadaDate} onChange={e => setEscuchadaDate(e.target.value)} required disabled={isUserDisabled} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-medium outline-none disabled:opacity-50" />
+                                </div>
+                                <button id="btn-escuchada" type="submit" disabled={isUserDisabled} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold p-4 rounded-xl transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed">Registrar Actividad</button>
+                            </form>
+                        )}
+
+                        {activeSubTab === 'gestion' && (
+                            <form onSubmit={handleGestSubmit} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4 slide-up">
+                                <div className="border-b pb-2">
+                                    <h3 className="font-bold text-slate-800 flex items-center gap-1.5">{Icons.Activity} Indicadores y Gestión</h3>
+                                    <p className="text-xs text-slate-500">Se requieren 3 puntos para aprobar el mes. Si se registra más de una vez, se computa únicamente el mayor puntaje.</p>
+                                </div>
+                                <div className="bg-blue-50/70 p-3.5 rounded-xl border border-blue-200 space-y-1">
+                                    <label className="block text-xs font-bold text-blue-900 uppercase flex items-center gap-1">{Icons.Calendar} Mes al que Corresponde el Indicador</label>
+                                    <select value={gestTargetMonth} onChange={e => { setGestTargetMonth(e.target.value); setGestDate(`${e.target.value}-28`); }} disabled={isUserDisabled} className="w-full bg-white border border-blue-300 text-blue-900 font-bold rounded-lg p-2.5 text-xs outline-none cursor-pointer disabled:opacity-50">
+                                        <option value={currentMonthYYYYMM}>Mes Actual ({getMonthName(currentMonthYYYYMM)})</option>
+                                        <option value={lastMonthYYYYMM}>Mes Anterior ({getMonthName(lastMonthYYYYMM)}) - Carga Retrospectiva (&lt; 30 días)</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Nombre del Indicador</label>
+                                    <input type="text" placeholder="Ej. Tasa de Infecciones del Torrente Sanguíneo (NAV/CVC)" value={indicadorName} onChange={e => setIndicadorName(e.target.value)} required disabled={isUserDisabled} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-medium outline-none disabled:opacity-50" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase mb-2">Nivel de Desarrollo Alcanzado</label>
+                                    <div className="space-y-2">
+                                        {config.gestion.map(a => (
+                                            <label key={a.id} className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${gestActivityId === a.id ? 'border-blue-500 bg-blue-50/50' : 'border-slate-200'}`}>
+                                                <div className="flex items-center gap-2">
+                                                    <input type="radio" name="gestion_level" value={a.id} checked={gestActivityId === a.id} onChange={() => setGestActivityId(a.id)} disabled={isUserDisabled} className="text-blue-600" />
+                                                    <span className="text-sm font-semibold text-slate-700">{a.name}</span>
+                                                </div>
+                                                <span className="text-xs font-black text-blue-600 bg-blue-100 px-2.5 py-1 rounded-lg">{a.points} pts</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Fecha de Registro</label>
+                                    <input type="date" value={gestDate} onChange={e => setGestDate(e.target.value)} required disabled={isUserDisabled} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-medium outline-none disabled:opacity-50" />
+                                </div>
+                                <button id="btn-gest" type="submit" disabled={isUserDisabled} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold p-4 rounded-xl transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed">Registrar Indicador de Gestión</button>
+                            </form>
+                        )}
+
+                        {activeSubTab === 'otras_actividades' && (
+                            <form onSubmit={handleOtraSubmit} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4 slide-up">
+                                <div className="border-b pb-2">
+                                    <h3 className="font-bold text-slate-800">Otras Actividades Formativas</h3>
+                                    <p className="text-xs text-slate-500">Choices, exámenes, jornadas y talleres.</p>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Tipo de Actividad</label>
+                                    <select value={otraActivityId} onChange={e => setOtraActivityId(e.target.value)} disabled={isUserDisabled} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-medium outline-none disabled:opacity-50">
+                                        {config.otras_actividades.map(a => <option key={a.id} value={a.id}>{a.name} ({a.points} pts)</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Cantidad / Días</label>
+                                    <input type="number" min="1" value={otraQty} onChange={e => setOtraQty(parseInt(e.target.value) || 1)} required disabled={isUserDisabled} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-medium outline-none disabled:opacity-50" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Fecha</label>
+                                    <input type="date" value={otraDate} onChange={e => setOtraDate(e.target.value)} required disabled={isUserDisabled} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-medium outline-none disabled:opacity-50" />
+                                </div>
+                                <button id="btn-otra" type="submit" disabled={isUserDisabled} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold p-4 rounded-xl transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed">Registrar Actividad Formativa</button>
+                            </form>
+                        )}
+                    </div>
+                );
+            };
+
+            const MedicoPlantaView = ({ currentStaffDoctor, residents, logs, evaluations, onSaveEvaluation, onToggleAnularLog, procedures, onAddProcedure, medicosPlanta, onAssignResident, config }) => {
+
+                const [doctorTab, setDoctorTab] = useState('alumnos'); // alumnos | auditoria | procedimientos
+
+                const myResidents = useMemo(() => {
+                    return residents.filter(r => r.medicoPlanta === currentStaffDoctor);
+                }, [residents, currentStaffDoctor]);
+
+                const unassignedResidents = useMemo(() => {
+                    return residents.filter(r => r.medicoPlanta !== currentStaffDoctor);
+                }, [residents, currentStaffDoctor]);
+
+                const [selectedResidentId, setSelectedResidentId] = useState(myResidents[0]?.id || '');
+                const [selectedMonth, setSelectedMonth] = useState(currentMonthYYYYMM);
+
+                const [newProcName, setNewProcName] = useState('');
+                const [newProcComplexity, setNewProcComplexity] = useState('baja');
+
+                // Asegurar que si el médico cambia de tab o agrega un alumno, el select tenga un valor válido
+                useEffect(() => {
+                    if (myResidents.length > 0 && !myResidents.some(r => r.id === selectedResidentId)) {
+                        setSelectedResidentId(myResidents[0].id);
+                    }
+                }, [myResidents, selectedResidentId]);
+
+                const selectedResident = residents.find(r => r.id === selectedResidentId) || myResidents[0];
+
+                const evalKey = `${selectedResidentId}_${selectedMonth}`;
+                const evalObj = evaluations[evalKey] || {};
+                const currentScore = typeof evalObj === 'object' ? (evalObj?.score || 0) : (Number(evalObj) || 0);
+                const currentEvaluator = typeof evalObj === 'object' ? evalObj?.evaluatedBy : (evalObj ? 'Médico de Planta' : null);
+
+                const isGradedByOther = Boolean(currentEvaluator && currentEvaluator !== currentStaffDoctor);
+
+                const isDateAllowed = useMemo(() => {
+                    if (selectedMonth < currentMonthYYYYMM) return true;
+                    if (selectedMonth === currentMonthYYYYMM) return new Date().getDate() >= 25;
+                    return false;
+                }, [selectedMonth]);
+
+                const isEvaluationAllowed = isDateAllowed && !isGradedByOther;
+                const [tempScore, setTempScore] = useState(currentScore);
+
+                useEffect(() => { setTempScore(currentScore); }, [evalKey, evaluations, currentScore]);
+
+                const residentLogsForMonth = useMemo(() => {
+                    if (!selectedResidentId) return [];
+                    return logs.filter(l => l.residentId === selectedResidentId && l.date.startsWith(selectedMonth));
+                }, [logs, selectedResidentId, selectedMonth]);
+
+                const progressData = useMemo(() => {
+                    if (!selectedResidentId) return null;
+                    return getMonthProgress(selectedResidentId, selectedMonth, logs, evaluations, procedures, config);
+                }, [selectedResidentId, selectedMonth, logs, evaluations, procedures, config]);
+
+                const handleSaveScoreSubmit = (e) => {
+                    e.preventDefault();
+                    if (!isEvaluationAllowed) return;
+                    onSaveEvaluation(selectedResidentId, selectedMonth, parseInt(tempScore), currentStaffDoctor);
+                };
+
+                const handleCreateProcedure = (e) => {
+                    e.preventDefault();
+                    if (!newProcName.trim()) return;
+                    onAddProcedure({ id: 'proc_' + Date.now(), name: newProcName.trim(), complexity: newProcComplexity, points: newProcComplexity === 'alta' ? 0.2 : 0.1 });
+                    setNewProcName('');
+                    triggerFeedback('btn-add-proc');
+                };
+
+                const triggerFeedback = (btnId) => {
+                    const btn = document.getElementById(btnId);
+                    if (btn) {
+                        const original = btn.innerText;
+                        btn.classList.add('bg-emerald-600');
+                        btn.innerText = '¡Guardado!';
+                        setTimeout(() => {
+                            btn.classList.remove('bg-emerald-600');
+                            btn.innerText = original;
+                        }, 1500);
+                    }
+                };
+
+                const allActs = getAllActivitiesFlat(config, procedures);
+
+                return (
+                    <div className="p-4 fade-in space-y-4">
+                        <div className="bg-gradient-to-br from-indigo-900 to-slate-900 rounded-2xl p-5 text-white shadow-xl">
+                            <div className="flex justify-between items-center mb-1">
+                                <span className="text-[10px] bg-indigo-500/30 text-indigo-200 px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider">Panel Docente</span>
+                                <span className="text-xs text-indigo-300 font-mono">Dr/a. {currentStaffDoctor}</span>
+                            </div>
+                            <h2 className="text-xl font-black">Supervisión Médica</h2>
+                        </div>
+
+                        <div className="flex gap-1 bg-slate-200 p-1.5 rounded-xl text-xs font-semibold">
+                            <button onClick={() => setDoctorTab('alumnos')} className={`flex-1 py-2 rounded-lg transition-all ${doctorTab === 'alumnos' ? 'bg-white text-indigo-700 shadow-sm font-bold' : 'text-slate-600'}`}>👥 Mis Alumnos</button>
+                            <button onClick={() => setDoctorTab('auditoria')} className={`flex-1 py-2 rounded-lg transition-all ${doctorTab === 'auditoria' ? 'bg-white text-indigo-700 shadow-sm font-bold' : 'text-slate-600'}`}>📝 Auditoría</button>
+                            <button onClick={() => setDoctorTab('procedimientos')} className={`flex-1 py-2 rounded-lg transition-all ${doctorTab === 'procedimientos' ? 'bg-white text-indigo-700 shadow-sm font-bold' : 'text-slate-600'}`}>💉 Procedimientos</button>
+                        </div>
+
+                        {doctorTab === 'alumnos' && (
+                            <div className="space-y-4 slide-up">
+                                <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                                    <h3 className="font-bold text-slate-800 text-sm border-b pb-2 mb-3">Reclamar Alumno a mi Cargo</h3>
+                                    <select
+                                        onChange={(e) => {
+                                            if(e.target.value) {
+                                                onAssignResident(e.target.value, 'medicoPlanta', currentStaffDoctor);
+                                                e.target.value = '';
+                                            }
+                                        }}
+                                        className="w-full bg-indigo-50 border border-indigo-200 text-indigo-900 rounded-xl p-3 text-xs font-bold outline-none cursor-pointer"
+                                    >
+                                        <option value="">Seleccionar un alumno para agregarlo...</option>
+                                        {unassignedResidents.map(r => (
+                                            <option key={r.id} value={r.id}>{r.apellido}, {r.nombre} (Actualmente con: {r.medicoPlanta || 'Nadie'})</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                                    <div className="flex justify-between items-center border-b pb-2 mb-3">
+                                        <h3 className="font-bold text-slate-800 text-sm">Alumnos Actualmente a mi Cargo</h3>
+                                        <span className="bg-indigo-100 text-indigo-800 text-[10px] font-black px-2 py-0.5 rounded-full">{myResidents.length}</span>
+                                    </div>
+
+                                    {myResidents.length === 0 ? (
+                                        <p className="text-xs text-slate-500 text-center py-4">No tienes alumnos asignados a tu cargo actualmente.</p>
+                                    ) : (
+                                        <div className="space-y-2">
+                                            {myResidents.map(res => (
+                                                <div key={res.id} className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex justify-between items-center">
+                                                    <div>
+                                                        <div className="font-bold text-slate-800 text-sm">{res.apellido}, {res.nombre}</div>
+                                                        <div className="text-[10px] text-slate-500">Burbuja: {res.burbuja} | Tipo: {res.tipo}</div>
+                                                    </div>
+                                                    <button onClick={() => { setSelectedResidentId(res.id); setDoctorTab('auditoria'); }} className="bg-white border border-slate-200 hover:border-indigo-500 text-indigo-600 text-[10px] font-bold px-3 py-1.5 rounded-lg shadow-sm transition-all">
+                                                        Auditar
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {doctorTab === 'auditoria' && (
+                            <div className="space-y-4 slide-up">
+                                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Alumno a Auditar</label>
+                                            <select value={selectedResidentId} onChange={e => setSelectedResidentId(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 outline-none">
+                                                {myResidents.map(r => <option key={r.id} value={r.id}>{r.apellido}, {r.nombre}</option>)}
+                                                {myResidents.length === 0 && <option value="">Sin alumnos a cargo</option>}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Mes a Auditar</label>
+                                            <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 outline-none" />
+                                        </div>
+                                    </div>
+
+                                    {selectedResident && progressData && (
+                                        <div className="bg-indigo-50 p-3 rounded-xl border border-indigo-100 flex justify-between items-center text-xs">
+                                            <div>
+                                                <div className="font-bold text-indigo-900">{selectedResident.nombre} {selectedResident.apellido}</div>
+                                                <div className="text-[10px] text-indigo-700">Progreso del mes:</div>
+                                            </div>
+                                            <div className="text-right">
+                                                <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase ${progressData.isApproved ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                                                    {progressData.isApproved ? 'Mes Aprobado' : 'Mes Pendiente'}
+                                                </span>
+                                                <div className="text-xs font-black text-indigo-600 mt-1">{progressData.totalPointsOverall} pts válidos</div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {selectedResident && (
+                                    <form onSubmit={handleSaveScoreSubmit} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-3">
+                                        <div className="flex justify-between items-center border-b pb-2">
+                                            <div>
+                                                <h3 className="font-bold text-slate-800 text-sm">Evaluación Mensual (1 - 10 pts)</h3>
+                                            </div>
+                                            {!isDateAllowed ? (
+                                                <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded flex items-center gap-1">{Icons.Lock} Desde día 25</span>
+                                            ) : currentEvaluator ? (
+                                                <span className="text-[10px] font-bold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded">Por: {currentEvaluator}</span>
+                                            ) : null}
+                                        </div>
+                                        {isGradedByOther && (
+                                            <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs p-3 rounded-xl font-medium flex items-center gap-2">
+                                                <span className="text-base">🔒</span>
+                                                <div><strong>Nota Bloqueada:</strong> Evaluado previamente por <strong>{currentEvaluator}</strong>.</div>
+                                            </div>
+                                        )}
+                                        <div className="flex items-center gap-3">
+                                            <select value={tempScore} onChange={e => setTempScore(e.target.value)} disabled={!isEvaluationAllowed} className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-bold text-slate-800 outline-none disabled:opacity-50 flex-1">
+                                                <option value="0">0 pts (Sin evaluar)</option>
+                                                {[1,2,3,4,5,6,7,8,9,10].map(n => <option key={n} value={n}>{n} {n > 4 ? 'pts (Aprobado)' : 'pts (Desaprobado)'}</option>)}
+                                            </select>
+                                            <button type="submit" disabled={!isEvaluationAllowed} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-5 py-3 rounded-xl text-xs transition-all shadow-md disabled:opacity-50">Guardar Nota</button>
+                                        </div>
+                                    </form>
+                                )}
+
+                                <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                                    <div className="border-b pb-2 mb-3 flex justify-between items-center">
+                                        <h3 className="font-bold text-slate-800 text-sm">Auditoría de Cargas del Mes</h3>
+                                        <span className="text-xs font-bold bg-slate-100 text-slate-700 px-2.5 py-1 rounded-lg">{residentLogsForMonth.length} Registros</span>
+                                    </div>
+
+                                    {residentLogsForMonth.length === 0 ? (
+                                        <p className="text-xs text-slate-400 py-6 text-center">El alumno no ha registrado actividades en este mes.</p>
+                                    ) : (
+                                        <div className="space-y-2.5">
+                                            {residentLogsForMonth.map(log => {
+                                                const act = allActs.find(a => a.id === log.activityId);
+                                                const actName = act ? act.name : log.activityId;
+                                                const pts = act ? act.points * log.qty : 0;
+                                                return (
+                                                    <div key={log.id} className={`p-3 rounded-xl border transition-all flex justify-between items-center ${log.anulado ? 'bg-rose-50 border-rose-200' : 'bg-slate-50 border-slate-200'}`}>
+                                                        <div className="space-y-0.5">
+                                                            <div className="font-bold text-xs text-slate-800 flex items-center gap-1.5">
+                                                                {log.className || log.indicatorName || log.topic || actName}
+                                                                {log.anulado && <span className="bg-rose-600 text-white text-[9px] px-2 py-0.5 rounded-full font-black uppercase">ANULADA</span>}
+                                                            </div>
+                                                            <div className="text-[10px] text-slate-500">Fecha: {log.date} {log.time ? `• ${log.time}` : ''}</div>
+                                                            {log.anulado && log.anuladoPor && <div className="text-[10px] font-semibold text-rose-700">Por: {log.anuladoPor}</div>}
+                                                        </div>
+                                                        <div className="flex items-center gap-3">
+                                                            <span className={`text-xs font-black ${log.anulado ? 'line-through text-rose-500' : 'text-emerald-600'}`}>+{Math.round(pts * 10)/10} pts</span>
+                                                            <button onClick={() => onToggleAnularLog(log.id, currentStaffDoctor)} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all ${log.anulado ? 'bg-emerald-600 text-white' : 'bg-rose-100 text-rose-700'}`}>
+                                                                {log.anulado ? <>{Icons.RefreshCw} Revertir</> : <>{Icons.XCircle} Anular</>}
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {doctorTab === 'procedimientos' && (
+                            <form onSubmit={handleCreateProcedure} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-3 slide-up">
+                                <div className="border-b pb-2">
+                                    <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">{Icons.Procedure} Agregar Nuevo Procedimiento</h3>
+                                    <p className="text-[10px] text-slate-500 mt-1">Suma procedimientos a la base de datos para que todos los alumnos puedan elegirlos.</p>
+                                </div>
+                                <div className="space-y-3">
+                                    <div>
+                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Nombre</label>
+                                        <input type="text" placeholder="Ej. Colocación de CVC" value={newProcName} onChange={e => setNewProcName(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold outline-none" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Complejidad</label>
+                                        <select value={newProcComplexity} onChange={e => setNewProcComplexity(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold outline-none">
+                                            <option value="baja">Baja Complejidad (0.1 pt)</option>
+                                            <option value="alta">Alta Complejidad (0.2 pt)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <button id="btn-add-proc" type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold p-3 rounded-xl text-xs transition-all shadow-sm">Guardar Procedimiento</button>
+
+                                <div className="pt-4 border-t border-slate-200">
+                                    <h4 className="font-bold text-[10px] text-slate-500 uppercase mb-2">Procedimientos Actuales ({procedures.length})</h4>
+                                    <div className="max-h-48 overflow-y-auto space-y-1">
+                                        {procedures.map(p => (
+                                            <div key={p.id} className="text-xs bg-slate-50 p-2 rounded border border-slate-100 flex justify-between">
+                                                <span className="font-semibold text-slate-700">{p.name}</span>
+                                                <span className="text-slate-400 font-mono">{p.points} pts</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </form>
+                        )}
+                    </div>
+                );
+            };
+
+            const ReportView = ({ logs, residents, evaluations, onSaveEvaluation, activeRole, currentStaffDoctor, onToggleAnularLog, procedures, config }) => {
+                const availableMonths = useMemo(() => {
+                    const months = new Set(logs.map(l => l.date.substring(0, 7)));
+                    months.add(currentMonthYYYYMM);
+                    return Array.from(months).sort().reverse();
+                }, [logs]);
+
+                const [selectedMonth, setSelectedMonth] = useState(currentMonthYYYYMM);
+
+                return (
+                    <div className="p-4 fade-in space-y-4">
+                        <div className="flex justify-between items-center">
+                            <div>
+                                <h2 className="text-2xl font-bold text-slate-800">Reporte Institucional</h2>
+                                <p className="text-xs text-slate-500">Transparencia y avance mensual.</p>
+                            </div>
+                            <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="bg-white border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 outline-none shadow-sm">
+                                {availableMonths.map(m => <option key={m} value={m}>{getMonthName(m)}</option>)}
+                            </select>
+                        </div>
+
+                        <div className="space-y-3">
+                            {residents.map(res => {
+                                const monthProgress = getMonthProgress(res.id, selectedMonth, logs, evaluations, procedures, config);
+                                const totalApproved = calculateResidentApprovedMonthsCount(res, logs, evaluations, procedures, config);
+
+                                return (
+                                    <div key={res.id} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <h3 className="font-bold text-slate-800 text-sm">{res.apellido}, {res.nombre}</h3>
+                                                <p className="text-[10px] text-slate-400">DNI: {res.dni} • Burbuja: {res.burbuja} • Planta: <b>{res.medicoPlanta || 'Sin Asignar'}</b></p>
+                                            </div>
+                                            <span className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-full ${monthProgress.isApproved ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                                                {monthProgress.isApproved ? 'Aprobado' : 'Pendiente'}
+                                            </span>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-2.5 rounded-xl">
+                                            <div>
+                                                <span className="text-[10px] text-slate-400 uppercase block">Puntos del Mes</span>
+                                                <span className="font-bold text-slate-700">{monthProgress.totalPointsOverall} pts</span>
+                                            </div>
+                                            <div>
+                                                <span className="text-[10px] text-slate-400 uppercase block">Formación Acumulada</span>
+                                                <span className="font-bold text-blue-600">{totalApproved} / 48 meses</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                );
+            };
+
+            const AdminView = ({ residents, onAddResident, medicosPlanta, onAddMedicoPlanta, systemUsers, onToggleUserStatus, onDeleteUser, logs, onToggleAnularLog, procedures, onAddProcedure, onDeleteProcedure, onChangeProcedureComplexity, onAssignResident, onUpdateResident, config, onUpdateConfig }) => {
+                const [newNombre, setNewNombre] = useState('');
+                const [newApellido, setNewApellido] = useState('');
+                const [newMail, setNewMail] = useState('');
+                const [newCelular, setNewCelular] = useState('');
+                const [newDni, setNewDni] = useState('');
+                const [newUniversidad, setNewUniversidad] = useState('');
+                const [newFechaIngreso, setNewFechaIngreso] = useState(new Date().toISOString().split('T')[0]);
+                const [newTipo, setNewTipo] = useState('Residente');
+                const [newMedicoPlanta, setNewMedicoPlanta] = useState('');
+                const [newBurbuja, setNewBurbuja] = useState('A');
+                const [newMesesPrevios, setNewMesesPrevios] = useState(0);
+
+                const [newMedicoName, setNewMedicoName] = useState('');
+                const [newMedicoDni, setNewMedicoDni] = useState('');
+                const [newMedicoPassword, setNewMedicoPassword] = useState('');
+
+                const [adminProcName, setAdminProcName] = useState('');
+                const [adminProcComplexity, setAdminProcComplexity] = useState('baja');
+                const [deleteModalStep, setDeleteModalStep] = useState(0);
+                const [selectedUserToDelete, setSelectedUserToDelete] = useState(null);
+                const [editForm, setEditForm] = useState(null);
+
+                const openEditUser = (usr) => {
+                    const resident = residents.find(r => r.id === usr.residentId);
+                    const [nombreActual, ...restoApellido] = (usr.name || '').split(' ');
+                    setEditForm({
+                        originalDni: usr.dni, role: usr.role, residentId: usr.residentId || null,
+                        nombre: resident?.nombre || nombreActual || '',
+                        apellido: resident?.apellido || restoApellido.join(' ') || '',
+                        dni: usr.dni, mail: resident?.mail || '', celular: resident?.celular || '',
+                        universidad: resident?.universidad || '', tipo: resident?.tipo || 'Residente',
+                        medicoPlanta: resident?.medicoPlanta || '', burbuja: resident?.burbuja || 'A',
+                        fechaIngreso: resident?.fechaIngreso || new Date().toISOString().split('T')[0], mesesPreviosAprobados: resident?.mesesPreviosAprobados ?? 0
+                    });
+                };
+
+                const handleEditFieldChange = (field, value) => setEditForm(prev => ({ ...prev, [field]: value }));
+                const handleEditSubmit = (e) => { e.preventDefault(); onUpdateResident(editForm.originalDni, editForm); setEditForm(null); };
+                const startDeleteProcess = (user) => { setSelectedUserToDelete(user); setDeleteModalStep(1); };
+                const confirmFirstStep = () => setDeleteModalStep(2);
+                const confirmSecondStep = () => {
+                    if (selectedUserToDelete) onDeleteUser(selectedUserToDelete.dni, selectedUserToDelete.residentId);
+                    setDeleteModalStep(0); setSelectedUserToDelete(null);
+                };
+                const cancelDelete = () => { setDeleteModalStep(0); setSelectedUserToDelete(null); };
+
+                const handleCreateResident = (e) => {
+                    e.preventDefault();
+                    if (!newNombre || !newApellido) return;
+                    onAddResident({
+                        id: 'r_' + Date.now(),
+                        nombre: newNombre, apellido: newApellido, mail: newMail, celular: newCelular,
+                        dni: newDni, universidad: newUniversidad, fechaIngreso: newFechaIngreso, tipo: newTipo,
+                        medicoPlanta: newMedicoPlanta, burbuja: newBurbuja, mesesPreviosAprobados: parseInt(newMesesPrevios) || 0
+                    });
+                    setNewNombre(''); setNewApellido(''); setNewMail(''); setNewCelular(''); setNewDni(''); setNewUniversidad(''); setNewMesesPrevios(0);
+                };
+
+                const handleCreateMedico = (e) => {
+                    e.preventDefault();
+                    if (!newMedicoName.trim() || !newMedicoDni.trim()) return;
+                    onAddMedicoPlanta({
+                        name: newMedicoName.trim(),
+                        dni: newMedicoDni.trim(),
+                        password: newMedicoPassword.trim() || '123456'
+                    });
+                    setNewMedicoName('');
+                    setNewMedicoDni('');
+                    setNewMedicoPassword('');
+                };
+
+                const handleCreateProcedureByAdmin = (e) => { e.preventDefault(); if (adminProcName.trim()) onAddProcedure({ id: 'proc_' + Date.now(), name: adminProcName.trim(), complexity: adminProcComplexity, points: adminProcComplexity === 'alta' ? 0.2 : 0.1 }); setAdminProcName(''); };
+
+                const handleUpdateActivityPoint = (category, actId, newPointsVal) => {
+                    const updatedArray = config[category].map(a => a.id === actId ? { ...a, points: parseFloat(newPointsVal) || 0 } : a);
+                    onUpdateConfig({ ...config, [category]: updatedArray });
+                };
+
+                return (
+                    <div className="p-4 fade-in space-y-6">
+                        <div>
+                            <h2 className="text-2xl font-bold text-slate-800">Panel de Administración</h2>
+                        </div>
+
+                        <form onSubmit={handleCreateResident} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-3">
+                            <h3 className="font-bold text-slate-800 text-sm border-b pb-2">Alta de Nuevo Alumno</h3>
+                            <div className="grid grid-cols-2 gap-3">
+                                <input type="text" placeholder="Nombre" value={newNombre} onChange={e => setNewNombre(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm" />
+                                <input type="text" placeholder="Apellido" value={newApellido} onChange={e => setNewApellido(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm" />
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <input type="text" placeholder="DNI (Usuario)" value={newDni} onChange={e => setNewDni(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm font-bold" />
+                                <input type="email" placeholder="Mail" value={newMail} onChange={e => setNewMail(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm" />
+                            </div>
+                            <input type="tel" placeholder="Celular (Ej. 1155443322)" value={newCelular} onChange={e => setNewCelular(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm font-medium" />
+                            <div className="grid grid-cols-3 gap-2">
+                                <select value={newTipo} onChange={e => setNewTipo(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs font-bold">
+                                    <option value="Residente">Residente</option><option value="Concurrente">Concurrente</option><option value="Rotante">Rotante</option>
+                                </select>
+                                <select value={newMedicoPlanta} onChange={e => setNewMedicoPlanta(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs text-blue-700 font-bold">
+                                    <option value="">-- Docente --</option>
+                                    {medicosPlanta.map(m => <option key={m} value={m}>{m}</option>)}
+                                </select>
+                                <select value={newBurbuja} onChange={e => setNewBurbuja(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs">
+                                    <option value="A">Burbuja A</option><option value="B1">Burbuja B1</option><option value="B2">Burbuja B2</option><option value="C">Burbuja C</option>
+                                </select>
+                            </div>
+                            <div className="bg-amber-50 p-3 rounded-xl border border-amber-200">
+                                <label className="block text-xs font-bold text-amber-900 uppercase mb-1">Meses Previos Aprobados al Ingreso</label>
+                                <input type="number" min="0" max="48" value={newMesesPrevios} onChange={e => setNewMesesPrevios(e.target.value)} className="w-full bg-white border border-amber-300 rounded-xl p-2.5 text-sm font-bold outline-none" />
+                            </div>
+                            <button type="submit" className="w-full bg-slate-900 text-white font-bold p-3.5 rounded-xl text-xs">Registrar Alumno</button>
+                        </form>
+
+                        <form onSubmit={handleCreateMedico} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-3">
+                            <h3 className="font-bold text-slate-800 text-sm border-b pb-2">Alta de Médico de Planta</h3>
+                            <div className="grid grid-cols-2 gap-2">
+                                <input type="text" placeholder="Nombre (Ej. Dr. Martínez)" value={newMedicoName} onChange={e => setNewMedicoName(e.target.value)} required className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs" />
+                                <input type="text" placeholder="DNI (Usuario)" value={newMedicoDni} onChange={e => setNewMedicoDni(e.target.value)} required className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold" />
+                            </div>
+                            <div className="flex gap-2">
+                                <input type="text" placeholder="Contraseña (mín. 6 caracteres, 123456 por defecto)" value={newMedicoPassword} onChange={e => setNewMedicoPassword(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs flex-1" />
+                                <button type="submit" className="bg-slate-900 text-white font-bold px-4 rounded-xl text-xs">Crear Cuenta</button>
+                            </div>
+                        </form>
+
+                        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-3">
+                            <h3 className="font-bold text-slate-800 text-sm border-b pb-2">Configuración Dinámica de Puntajes</h3>
+                            <p className="text-[10px] text-slate-500 mb-4">Edita cuánto vale cada actividad. Los cambios aplican para todos al instante.</p>
+
+                            {Object.keys(config).map(category => (
+                                <div key={category} className="mb-4">
+                                    <h4 className="font-bold text-[11px] uppercase text-indigo-700 mb-1.5">{category.replace('_', ' ')}</h4>
+                                    <div className="space-y-1">
+                                        {config[category].map(act => (
+                                            <div key={act.id} className="flex justify-between items-center bg-slate-50 p-2 rounded-lg border border-slate-100">
+                                                <span className="text-[11px] font-medium text-slate-700 w-2/3 truncate" title={act.name}>{act.name}</span>
+                                                <div className="flex items-center gap-1 w-1/3 justify-end">
+                                                    <input
+                                                        type="number" step="0.1" min="0" value={act.points}
+                                                        onChange={e => handleUpdateActivityPoint(category, act.id, e.target.value)}
+                                                        className="w-14 p-1 text-xs font-bold text-center border border-slate-300 rounded outline-none text-blue-700"
+                                                    />
+                                                    <span className="text-[10px] text-slate-400 font-bold">pts</span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        <form onSubmit={handleCreateProcedureByAdmin} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-3">
+                            <div className="border-b pb-2"><h3 className="font-bold text-slate-800 text-sm">Catálogo de Procedimientos</h3></div>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                <input type="text" placeholder="Nombre Procedimiento" value={adminProcName} onChange={e => setAdminProcName(e.target.value)} required className="sm:col-span-2 bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold outline-none" />
+                                <select value={adminProcComplexity} onChange={e => setAdminProcComplexity(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold outline-none">
+                                    <option value="baja">Baja (0.1 pt)</option><option value="alta">Alta (0.2 pt)</option>
+                                </select>
+                            </div>
+                            <button type="submit" className="w-full bg-blue-600 text-white font-bold p-3 rounded-xl text-xs">Agregar Procedimiento</button>
+                            <div className="space-y-2 mt-4 pt-3 border-t">
+                                {procedures.map(proc => (
+                                    <div key={proc.id} className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs">
+                                        <span className="font-semibold flex-1">{proc.name}</span>
+                                        <div className="flex items-center gap-2">
+                                            <select value={proc.complexity} onChange={e => onChangeProcedureComplexity(proc.id, e.target.value)} className="bg-white border border-slate-200 rounded-lg p-1 text-[11px] font-bold">
+                                                <option value="baja">Baja (0.1 pt)</option><option value="alta">Alta (0.2 pt)</option>
+                                            </select>
+                                            <button type="button" onClick={() => onDeleteProcedure(proc.id)} className="bg-rose-100 hover:bg-rose-600 text-rose-700 hover:text-white p-1.5 rounded-lg">{Icons.Trash}</button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </form>
+
+                        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-3">
+                            <h3 className="font-bold text-slate-800 text-sm border-b pb-2">Gestión de Usuarios</h3>
+                            <div className="space-y-2">
+                                {systemUsers.map(usr => {
+                                    const resident = usr.role === 'alumno' ? residents.find(r => r.id === usr.residentId) : null;
+                                    return (
+                                        <div key={usr.dni} className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs space-y-2">
+                                            <div className="flex justify-between items-center">
+                                                <div>
+                                                    <div className="font-bold text-slate-800">{usr.name} ({usr.role})</div>
+                                                    <div className="text-[10px] text-slate-400">DNI: {usr.dni} {usr.disabled ? '• INHABILITADO' : '• Activo'}</div>
+                                                </div>
+                                                {usr.role !== 'admin' && (
+                                                    <div className="flex items-center gap-2">
+                                                        <button onClick={() => openEditUser(usr)} className="bg-blue-100 hover:bg-blue-600 text-blue-700 hover:text-white px-3 py-1.5 rounded-lg text-[10px] font-bold">Editar</button>
+                                                        <button onClick={() => onToggleUserStatus(usr.dni)} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${usr.disabled ? 'bg-emerald-600 text-white' : 'bg-amber-100 text-amber-800'}`}>
+                                                            {usr.disabled ? 'Habilitar' : 'Inhabilitar'}
+                                                        </button>
+                                                        <button onClick={() => startDeleteProcess(usr)} className="bg-rose-100 hover:bg-rose-600 text-rose-700 hover:text-white p-1.5 rounded-lg">{Icons.Trash}</button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            {resident && (
+                                                <div className="flex gap-2 pt-2 border-t border-slate-200">
+                                                    <select value={resident.burbuja || 'A'} onChange={e => onAssignResident(resident.id, 'burbuja', e.target.value)} className="flex-1 bg-white border border-slate-200 rounded-lg p-1.5 text-[11px] font-bold">
+                                                        <option value="A">Burbuja A</option><option value="B1">Burbuja B1</option><option value="B2">Burbuja B2</option><option value="C">Burbuja C</option>
+                                                    </select>
+                                                    <select value={resident.medicoPlanta || ''} onChange={e => onAssignResident(resident.id, 'medicoPlanta', e.target.value)} className="flex-1 bg-white border border-slate-200 rounded-lg p-1.5 text-[11px] font-bold text-blue-700">
+                                                        <option value="">-- Sin Asignar --</option>
+                                                        {medicosPlanta.map(m => <option key={m} value={m}>{m}</option>)}
+                                                    </select>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {editForm && (
+                            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 fade-in overflow-y-auto">
+                                <form onSubmit={handleEditSubmit} className="bg-white rounded-2xl p-6 max-w-sm w-full space-y-3 shadow-2xl my-8">
+                                    <h3 className="font-bold text-slate-900 text-base border-b pb-2">Editar Usuario</h3>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <input type="text" placeholder="Nombre" value={editForm.nombre} onChange={e => handleEditFieldChange('nombre', e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm" />
+                                        <input type="text" placeholder="Apellido" value={editForm.apellido} onChange={e => handleEditFieldChange('apellido', e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm" />
+                                    </div>
+                                    <div>
+                                        <input type="text" value={editForm.dni} disabled className="w-full bg-slate-100 border border-slate-200 rounded-xl p-2.5 text-sm font-bold text-slate-500 cursor-not-allowed" />
+                                        <p className="text-[10px] text-slate-400 mt-1">El DNI es el usuario de acceso y no se puede cambiar acá. Para eso hay que borrar la cuenta y crearla de nuevo.</p>
+                                    </div>
+
+                                    {editForm.role === 'alumno' && (
+                                        <>
+                                            <input type="email" placeholder="Mail" value={editForm.mail} onChange={e => handleEditFieldChange('mail', e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm" />
+                                            <input type="tel" placeholder="Celular" value={editForm.celular} onChange={e => handleEditFieldChange('celular', e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm" />
+                                            <input type="text" placeholder="Universidad" value={editForm.universidad} onChange={e => handleEditFieldChange('universidad', e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm" />
+                                            <div className="grid grid-cols-3 gap-2">
+                                                <select value={editForm.tipo} onChange={e => handleEditFieldChange('tipo', e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs font-bold">
+                                                    <option value="Residente">Residente</option><option value="Concurrente">Concurrente</option><option value="Rotante">Rotante</option>
+                                                </select>
+                                                <select value={editForm.medicoPlanta} onChange={e => handleEditFieldChange('medicoPlanta', e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs font-bold text-blue-700">
+                                                    <option value="">-- Sin Asignar --</option>
+                                                    {medicosPlanta.map(m => <option key={m} value={m}>{m}</option>)}
+                                                </select>
+                                                <select value={editForm.burbuja} onChange={e => handleEditFieldChange('burbuja', e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs">
+                                                    <option value="A">Burbuja A</option><option value="B1">Burbuja B1</option><option value="B2">Burbuja B2</option><option value="C">Burbuja C</option>
+                                                </select>
+                                            </div>
+                                            <div className="bg-amber-50 p-3 rounded-xl border border-amber-200">
+                                                <label className="block text-xs font-bold text-amber-900 uppercase mb-1">Meses Previos Aprobados al Ingreso</label>
+                                                <input type="number" min="0" max="48" value={editForm.mesesPreviosAprobados} onChange={e => handleEditFieldChange('mesesPreviosAprobados', parseInt(e.target.value) || 0)} className="w-full bg-white border border-amber-300 rounded-xl p-2.5 text-sm font-bold outline-none" />
+                                            </div>
+                                        </>
+                                    )}
+
+                                    <div className="flex gap-2 pt-2">
+                                        <button type="button" onClick={() => setEditForm(null)} className="flex-1 bg-slate-100 font-bold p-3 rounded-xl text-xs">Cancelar</button>
+                                        <button type="submit" className="flex-1 bg-blue-600 text-white font-bold p-3 rounded-xl text-xs">Guardar Cambios</button>
+                                    </div>
+                                </form>
+                            </div>
+                        )}
+
+                        {deleteModalStep > 0 && selectedUserToDelete && (
+                            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 fade-in">
+                                <div className="bg-white rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-2xl text-center">
+                                    <div className="text-4xl text-rose-500">⚠️</div>
+                                    {deleteModalStep === 1 ? (
+                                        <>
+                                            <h3 className="font-bold text-slate-900 text-base">¿Desea eliminar este usuario?</h3>
+                                            <div className="flex gap-2 pt-2">
+                                                <button onClick={cancelDelete} className="flex-1 bg-slate-100 font-bold p-3 rounded-xl text-xs">Cancelar</button>
+                                                <button onClick={confirmFirstStep} className="flex-1 bg-rose-600 text-white font-bold p-3 rounded-xl text-xs">Continuar</button>
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <h3 className="font-bold text-rose-600 text-base">Confirmación Final Irreversible</h3>
+                                            <div className="flex gap-2 pt-2">
+                                                <button onClick={cancelDelete} className="flex-1 bg-slate-100 font-bold p-3 rounded-xl text-xs">Cancelar</button>
+                                                <button onClick={confirmSecondStep} className="flex-1 bg-rose-700 text-white font-black p-3 rounded-xl text-xs">SÍ, ELIMINAR</button>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                );
+            };
+
+            const AuthView = ({ onRegister }) => {
+                const [mode, setMode] = useState('login');
+                const [dni, setDni] = useState('');
+                const [password, setPassword] = useState('');
+                const [registerRole, setRegisterRole] = useState('alumno');
+                const [registerTipo, setRegisterTipo] = useState('Residente');
+                const [registerNombre, setRegisterNombre] = useState('');
+                const [registerApellido, setRegisterApellido] = useState('');
+                const [registerMail, setRegisterMail] = useState('');
+                const [registerCelular, setRegisterCelular] = useState('');
+                const [errorMsg, setErrorMsg] = useState('');
+                const [isSubmitting, setIsSubmitting] = useState(false);
+
+                // Firebase Auth valida el DNI+contraseña del lado del servidor: acá ya
+                // no se compara ni se guarda ninguna contraseña en texto plano.
+                const handleLoginSubmit = async (e) => {
+                    e.preventDefault();
+                    setErrorMsg('');
+                    setIsSubmitting(true);
+                    try {
+                        await auth.signInWithEmailAndPassword(dniToPseudoEmail(dni), password);
+                    } catch (err) {
+                        setErrorMsg('DNI o contraseña incorrectos.');
+                    } finally {
+                        setIsSubmitting(false);
+                    }
+                };
+
+                const handleRegisterSubmit = async (e) => {
+                    e.preventDefault();
+                    setErrorMsg('');
+                    setIsSubmitting(true);
+
+                    const newUser = {
+                        dni: dni.trim(), role: registerRole,
+                        name: `${registerNombre} ${registerApellido}`.trim(),
+                        residentId: registerRole === 'alumno' ? 'r_' + Date.now() : null,
+                        doctorName: registerRole === 'medico' ? `${registerNombre} ${registerApellido}` : null,
+                        disabled: false
+                    };
+
+                    try {
+                        await auth.createUserWithEmailAndPassword(dniToPseudoEmail(dni), password);
+                    } catch (err) {
+                        setErrorMsg(err.code === 'auth/email-already-in-use' ? 'Ese DNI ya está registrado.' : 'No se pudo crear la cuenta (la contraseña necesita al menos 6 caracteres).');
+                        setIsSubmitting(false);
+                        return;
+                    }
+
+                    onRegister(newUser, { nombre: registerNombre, apellido: registerApellido, dni: dni.trim(), mail: registerMail, celular: registerCelular, tipo: registerTipo });
+                    setIsSubmitting(false);
+                };
+
+                return (
+                    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+                        <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-6 slide-up">
+                            <div className="text-center space-y-2">
+                                <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-blue-600 text-white font-black text-2xl shadow-lg">E</div>
+                                <h1 className="text-xl font-black text-slate-900">Escuelita Bicentenario Log</h1>
+                            </div>
+                            {errorMsg && <div className="bg-rose-50 border border-rose-200 text-rose-700 text-xs p-3 rounded-xl font-semibold">{errorMsg}</div>}
+
+                            <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl text-xs font-bold">
+                                <button type="button" onClick={() => { setMode('login'); setErrorMsg(''); }} className={`py-2.5 rounded-lg ${mode === 'login' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Iniciar Sesión</button>
+                                <button type="button" onClick={() => { setMode('register'); setErrorMsg(''); }} className={`py-2.5 rounded-lg ${mode === 'register' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Registrarse</button>
+                            </div>
+
+                            {mode === 'login' ? (
+                                <form onSubmit={handleLoginSubmit} className="space-y-4">
+                                    <input type="text" placeholder="DNI (Usuario)" value={dni} onChange={e => setDni(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-bold outline-none" />
+                                    <input type="password" placeholder="Contraseña" value={password} onChange={e => setPassword(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-bold outline-none" />
+                                    <button type="submit" disabled={isSubmitting} className="w-full bg-blue-600 text-white font-bold p-4 rounded-xl text-xs disabled:opacity-50">{isSubmitting ? 'Ingresando...' : 'Ingresar al Sistema'}</button>
+                                </form>
+                            ) : (
+                                <form onSubmit={handleRegisterSubmit} className="space-y-3">
+                                    <select value={registerRole} onChange={e => setRegisterRole(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold outline-none">
+                                        <option value="alumno">Alumno / Residente</option><option value="medico">Médico de Planta</option>
+                                    </select>
+                                    {registerRole === 'alumno' && (
+                                        <select value={registerTipo} onChange={e => setRegisterTipo(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold outline-none">
+                                            <option value="Residente">Residente</option><option value="Concurrente">Concurrente</option><option value="Rotante">Rotante</option>
+                                        </select>
+                                    )}
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <input type="text" placeholder="Nombre" value={registerNombre} onChange={e => setRegisterNombre(e.target.value)} required className="w-full bg-slate-50 border rounded-xl p-2.5 text-sm" />
+                                        <input type="text" placeholder="Apellido" value={registerApellido} onChange={e => setRegisterApellido(e.target.value)} required className="w-full bg-slate-50 border rounded-xl p-2.5 text-sm" />
+                                    </div>
+                                    {registerRole === 'alumno' && (
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <input type="email" placeholder="Mail" value={registerMail} onChange={e => setRegisterMail(e.target.value)} className="w-full bg-slate-50 border rounded-xl p-2.5 text-sm" />
+                                            <input type="tel" placeholder="Celular" value={registerCelular} onChange={e => setRegisterCelular(e.target.value)} className="w-full bg-slate-50 border rounded-xl p-2.5 text-sm" />
+                                        </div>
+                                    )}
+                                    <input type="text" placeholder="DNI (Será su Usuario)" value={dni} onChange={e => setDni(e.target.value)} required className="w-full bg-slate-50 border rounded-xl p-2.5 text-sm font-bold" />
+                                    <input type="password" placeholder="Contraseña (mín. 6 caracteres)" value={password} onChange={e => setPassword(e.target.value)} required minLength={6} className="w-full bg-slate-50 border rounded-xl p-2.5 text-sm font-bold" />
+                                    <button type="submit" disabled={isSubmitting} className="w-full bg-emerald-600 text-white font-bold p-3.5 rounded-xl text-xs disabled:opacity-50">{isSubmitting ? 'Creando...' : 'Crear Cuenta'}</button>
+                                </form>
+                            )}
+                        </div>
+                    </div>
+                );
+            };
+
+            const App = () => {
+                const [loadingInitial, setLoadingInitial] = useState(true);
+                const [systemUsers, setSystemUsers] = useState([]);
+                const [residents, setResidents] = useState([]);
+                const [procedures, setProcedures] = useState([]);
+                const [logs, setLogs] = useState([]);
+                const [publishedClasses, setPublishedClasses] = useState([]);
+                const [evaluations, setEvaluations] = useState({});
+                const [config, setConfig] = useState(DEFAULT_ACTIVITIES_CONFIG);
+
+                const [currentUser, setCurrentUser] = useState(null);
+                const [activeTab, setActiveTab] = useState('dashboard');
+                const [idleNotice, setIdleNotice] = useState(false);
+
+                const inactivityTimerRef = useRef(null);
+                const [authUser, setAuthUser] = useState(undefined); // undefined = todavía no se sabe, null = sin sesión
+
+                // Los médicos de planta se deducen dinámicamente de los usuarios reales.
+                const medicosPlanta = useMemo(() => {
+                    return systemUsers.filter(u => u.role === 'medico').map(u => u.name);
+                }, [systemUsers]);
+
+                // =========================================================================
+                // ESTADO DE SESIÓN (Firebase Auth)
+                // =========================================================================
+                useEffect(() => {
+                    const unsubAuth = auth.onAuthStateChanged(u => {
+                        setAuthUser(u);
+                        if (!u) setLoadingInitial(false);
+                    });
+                    return () => unsubAuth();
+                }, []);
+
+                // =========================================================================
+                // FIREBASE REALTIME SYNC — recién arranca cuando hay sesión iniciada.
+                // Antes de loguearse, las reglas de Firestore no dejan leer nada (ver
+                // firestore.rules), así que no tiene sentido intentarlo.
+                // =========================================================================
+                useEffect(() => {
+                    if (!authUser) return;
+                    setLoadingInitial(true);
+                    const safetyTimer = setTimeout(() => { setLoadingInitial(false); }, 6000);
+
+                    const unsubConfig = db.collection('settings').doc('activities').onSnapshot(snap => { if(snap.exists) setConfig(snap.data()); });
+                    const unsubUsers = db.collection('users').onSnapshot(snap => setSystemUsers(snap.docs.map(doc => doc.data())));
+                    const unsubResidents = db.collection('residents').onSnapshot(snap => setResidents(snap.docs.map(doc => doc.data())));
+                    const unsubProcedures = db.collection('procedures').onSnapshot(snap => setProcedures(snap.docs.map(doc => doc.data())));
+                    const unsubLogs = db.collection('logs').onSnapshot(snap => setLogs(snap.docs.map(doc => doc.data())));
+                    const unsubClasses = db.collection('classes').onSnapshot(snap => setPublishedClasses(snap.docs.map(doc => doc.data())));
+                    const unsubEvaluations = db.collection('evaluations').onSnapshot(snap => {
+                        const evals = {};
+                        snap.docs.forEach(doc => { evals[doc.id] = doc.data(); });
+                        setEvaluations(evals);
+                        clearTimeout(safetyTimer);
+                        setLoadingInitial(false);
+                    }, err => {
+                        console.error(err);
+                        clearTimeout(safetyTimer);
+                        setLoadingInitial(false);
+                    });
+
+                    return () => {
+                        clearTimeout(safetyTimer);
+                        unsubConfig(); unsubUsers(); unsubResidents(); unsubProcedures(); unsubLogs(); unsubClasses(); unsubEvaluations();
+                    };
+                }, [authUser]);
+
+                const resetInactivityTimer = () => {
+                    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+                    if (currentUser) {
+                        inactivityTimerRef.current = setTimeout(() => {
+                            handleLogout();
+                            setIdleNotice(true);
+                        }, 180000);
+                    }
+                };
+
+                useEffect(() => {
+                    const events = ['mousemove', 'keydown', 'click', 'touchstart', 'scroll'];
+                    const handleUserActivity = () => resetInactivityTimer();
+                    events.forEach(ev => window.addEventListener(ev, handleUserActivity));
+                    resetInactivityTimer();
+                    return () => {
+                        if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+                        events.forEach(ev => window.removeEventListener(ev, handleUserActivity));
+                    };
+                }, [currentUser?.dni]);
+
+                // El usuario logueado se deduce de la sesión real de Firebase Auth + su
+                // perfil en Firestore (ya no hay contraseñas guardadas ni comparadas a mano).
+                useEffect(() => {
+                    if (!authUser) { setCurrentUser(null); return; }
+                    const match = systemUsers.find(u => dniToPseudoEmail(u.dni) === authUser.email);
+                    if (match) setCurrentUser(match);
+                }, [authUser, systemUsers]);
+
+                // Si una cuenta de acceso queda huérfana (p.ej. el Admin borró al usuario
+                // pero la sesión de ese celular seguía abierta) nunca aparece un perfil:
+                // sin este corte se quedaría mirando "Conectando..." para siempre.
+                useEffect(() => {
+                    if (!authUser) return;
+                    const timer = setTimeout(() => {
+                        setCurrentUser(prev => {
+                            if (!prev) {
+                                auth.signOut();
+                                alert('No se encontró tu perfil. Puede que tu cuenta haya sido eliminada; contactá al administrador.');
+                            }
+                            return prev;
+                        });
+                    }, 10000);
+                    return () => clearTimeout(timer);
+                }, [authUser]);
+
+                useEffect(() => {
+                    if (!currentUser) return;
+                    setIdleNotice(false);
+                    setActiveTab(currentUser.role === 'medico' ? 'medico_planta' : currentUser.role === 'admin' ? 'admin' : 'dashboard');
+                }, [currentUser?.dni]);
+
+                const isCurrentDisabled = useMemo(() => {
+                    if (!currentUser) return false;
+                    const match = systemUsers.find(u => u.dni === currentUser.dni);
+                    return match ? Boolean(match.disabled) : false;
+                }, [currentUser, systemUsers]);
+
+                const activeResident = useMemo(() => {
+                    if (!currentUser || currentUser.role !== 'alumno') return residents[0] || {};
+                    return residents.find(r => r.id === currentUser.residentId || r.dni === currentUser.dni) || {};
+                }, [currentUser, residents]);
+
+                const activeStaffDoctor = useMemo(() => {
+                    if (!currentUser || currentUser.role !== 'medico') return medicosPlanta[0] || '';
+                    return currentUser.doctorName || currentUser.name || medicosPlanta[0] || '';
+                }, [currentUser, medicosPlanta]);
+
+                if (loadingInitial || (authUser && !currentUser)) {
+                    return (
+                        <div className="min-h-screen flex items-center justify-center bg-slate-900">
+                            <div className="bg-white p-6 rounded-3xl shadow-2xl text-center space-y-4">
+                                <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-blue-600 text-white font-black text-xl animate-pulse">E</div>
+                                <div className="text-slate-800 text-xs font-bold tracking-widest uppercase animate-pulse">Conectando...</div>
+                            </div>
+                        </div>
+                    );
+                }
+
+                const handleLogout = () => auth.signOut();
+
+                // =========================================================================
+                // FUNCIONES DE ESCRITURA EN FIREBASE
+                // =========================================================================
+                const handleToggleUserStatus = (userDni) => {
+                    const user = systemUsers.find(u => u.dni === userDni);
+                    if(user) db.collection('users').doc(userDni).update({ disabled: !user.disabled });
+                };
+
+                // ponytail: esto borra el perfil (Firestore) pero no la cuenta de acceso
+                // (Firebase Auth) — borrar la cuenta de otra persona requiere Admin SDK /
+                // Cloud Functions, que este proyecto no tiene por no usar backend propio.
+                // Si esa persona vuelve a entrar sin perfil, se la desloguea sola a los
+                // 10s (ver el useEffect de "cuenta huérfana" en App). Upgrade: una Cloud
+                // Function que borre también el usuario de Auth al borrar el doc.
+                const handleDeleteUser = (userDni, residentId) => {
+                    db.collection('users').doc(userDni).delete();
+                    if (residentId) {
+                        db.collection('residents').doc(residentId).delete();
+                        db.collection('logs').where('residentId', '==', residentId).get().then(snap => {
+                            snap.forEach(doc => doc.ref.delete());
+                        });
+                    }
+                };
+
+                const handleRegisterUser = (newUser, newResData) => {
+                    const { password: _pw, ...userProfile } = newUser; // la contraseña vive solo en Firebase Auth, nunca en Firestore
+                    db.collection('users').doc(newUser.dni).set({ ...userProfile, disabled: false });
+                    if (newUser.role === 'alumno') {
+                        const newRes = {
+                            id: newUser.residentId, nombre: newResData.nombre, apellido: newResData.apellido,
+                            dni: newResData.dni, mail: newResData.mail || '', celular: newResData.celular || '',
+                            universidad: 'UBA', fechaIngreso: new Date().toISOString().split('T')[0],
+                            tipo: newResData.tipo || 'Residente', medicoPlanta: medicosPlanta.length > 0 ? medicosPlanta[0] : '',
+                            burbuja: 'A', mesesPreviosAprobados: 0
+                        };
+                        db.collection('residents').doc(newRes.id).set(newRes);
+                    }
+                };
+
+                const handleAddLog = (newLog) => {
+                    if (isCurrentDisabled) return;
+                    const id = Date.now().toString();
+                    db.collection('logs').doc(id).set({ ...newLog, id, anulado: false });
+                };
+
+                const handleToggleAnularLog = (logId, userWhoAnnulled) => {
+                    const log = logs.find(l => l.id === logId);
+                    if (log) {
+                        db.collection('logs').doc(logId.toString()).update({
+                            anulado: !log.anulado,
+                            anuladoPor: !log.anulado ? userWhoAnnulled : null
+                        });
+                    }
+                };
+
+                const handlePublishClass = (newClass) => {
+                    if (isCurrentDisabled) return;
+                    db.collection('classes').doc(newClass.id.toString()).set(newClass);
+                };
+
+                const handleAddResident = async (newRes) => {
+                    try {
+                        await createAuthAccountWithoutSignIn(newRes.dni, '123456');
+                    } catch (err) {
+                        alert('No se pudo crear el acceso del alumno: ' + err.message);
+                        return;
+                    }
+                    db.collection('residents').doc(newRes.id).set(newRes);
+                    db.collection('users').doc(newRes.dni).set({
+                        dni: newRes.dni, role: 'alumno', name: `${newRes.nombre} ${newRes.apellido}`, residentId: newRes.id, disabled: false
+                    });
+                };
+
+                const handleAddMedicoPlanta = async (medicoData) => {
+                    try {
+                        await createAuthAccountWithoutSignIn(medicoData.dni, medicoData.password);
+                    } catch (err) {
+                        alert('No se pudo crear el acceso del médico: ' + err.message);
+                        return;
+                    }
+                    db.collection('users').doc(medicoData.dni).set({
+                        dni: medicoData.dni,
+                        role: 'medico',
+                        name: medicoData.name,
+                        disabled: false
+                    });
+                };
+
+                const handleAddProcedure = (newProc) => {
+                    db.collection('procedures').doc(newProc.id).set(newProc);
+                };
+
+                const handleDeleteProcedure = (procId) => {
+                    db.collection('procedures').doc(procId).delete();
+                };
+
+                const handleUpdateProcedureComplexity = (procId, newComplexity) => {
+                    db.collection('procedures').doc(procId).update({
+                        complexity: newComplexity, points: newComplexity === 'alta' ? 0.2 : 0.1
+                    });
+                };
+
+                const handleSaveEvaluation = (residentId, month, score, evaluatorName) => {
+                    const evalKey = `${residentId}_${month}`;
+                    db.collection('evaluations').doc(evalKey).set({
+                        score: parseInt(score), evaluatedBy: evaluatorName || activeStaffDoctor
+                    });
+                };
+
+                const handleAssignResident = (residentId, field, value) => {
+                    db.collection('residents').doc(residentId).update({ [field]: value });
+                };
+
+                const handleUpdateOwnProfile = (residentId, updatedFields) => {
+                    db.collection('residents').doc(residentId).update(updatedFields);
+                };
+
+                // El DNI es de solo lectura en el panel de edición (ver AdminView) porque
+                // es el usuario de acceso en Firebase Auth y no se puede renombrar desde
+                // el cliente sin un backend. Por eso acá el doc de users nunca cambia de id.
+                const handleAdminUpdateResident = (originalDni, updatedData) => {
+                    const fullName = `${updatedData.nombre} ${updatedData.apellido}`.trim();
+
+                    if (updatedData.residentId) {
+                        const { originalDni: _omit, residentId, role, ...residentFields } = updatedData;
+                        db.collection('residents').doc(residentId).update(residentFields);
+                    }
+
+                    db.collection('users').doc(originalDni).update({ name: fullName });
+                };
+
+                const handleUpdateConfig = (newConfig) => {
+                    db.collection('settings').doc('activities').set(newConfig);
+                };
+
+                if (!currentUser) {
+                    return (
+                        <div>
+                            {idleNotice && <div className="bg-amber-500 text-white text-xs font-bold p-2 text-center sticky top-0 z-50">🔒 Sesión cerrada automáticamente por pasar 3 minutos sin actividad.</div>}
+                            <AuthView onRegister={handleRegisterUser} />
+                        </div>
+                    );
+                }
+
+                return (
+                    <div className="min-h-screen flex flex-col max-w-md mx-auto bg-slate-50 relative shadow-2xl">
+                        <header className="bg-slate-900 text-white px-4 py-3 sticky top-0 z-20 shadow-md">
+                            <div className="flex justify-between items-center mb-2">
+                                <div className="font-black text-xl text-blue-400 tracking-tight flex items-center gap-1.5">
+                                    <span className="bg-blue-600 text-white rounded-lg px-2 py-0.5 leading-none">E</span>
+                                    scuelita Bicentenario Log
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold uppercase ${currentUser.role === 'admin' ? 'bg-amber-500 text-slate-900' : currentUser.role === 'medico' ? 'bg-indigo-600 text-white' : 'bg-blue-600 text-white'}`}>
+                                        {currentUser.role === 'admin' ? 'Admin' : currentUser.role === 'medico' ? 'Médico Planta' : 'Alumno'}
+                                    </span>
+                                    <button onClick={handleLogout} className="bg-slate-800 hover:bg-rose-600 text-slate-300 hover:text-white p-1.5 rounded-lg transition-all">{Icons.LogOut}</button>
+                                </div>
+                            </div>
+                            <div className="bg-slate-800/80 px-3 py-1.5 rounded-xl text-xs flex justify-between items-center">
+                                <div className="flex items-center gap-1.5"><span className="text-slate-400">{Icons.User}</span><span className="font-bold text-white">{currentUser.name}</span></div>
+                                <span className="text-[10px] text-slate-400 font-mono">DNI: {currentUser.dni}</span>
+                            </div>
+                        </header>
+
+                        <main className="flex-grow">
+                            {currentUser.role === 'medico' && activeTab === 'medico_planta' && <MedicoPlantaView currentStaffDoctor={activeStaffDoctor} residents={residents} logs={logs} evaluations={evaluations} onSaveEvaluation={handleSaveEvaluation} onToggleAnularLog={handleToggleAnularLog} activeRole={currentUser.role} procedures={procedures} onAddProcedure={handleAddProcedure} medicosPlanta={medicosPlanta} onAssignResident={handleAssignResident} config={config} />}
+                            {activeTab === 'dashboard' && currentUser.role === 'alumno' && <DashboardView currentResident={activeResident} currentMonthYYYYMM={currentMonthYYYYMM} logs={logs} evaluations={evaluations} procedures={procedures} onUpdateProfile={handleUpdateOwnProfile} medicosPlanta={medicosPlanta} config={config} />}
+                            {activeTab === 'log' && <LogActivityView currentResident={activeResident} onAddLog={handleAddLog} publishedClasses={publishedClasses} onPublishClass={handlePublishClass} logs={logs} isUserDisabled={isCurrentDisabled} procedures={procedures} config={config} />}
+                            {activeTab === 'report' && <ReportView logs={logs} residents={residents} evaluations={evaluations} onSaveEvaluation={handleSaveEvaluation} activeRole={currentUser.role} currentStaffDoctor={activeStaffDoctor} onToggleAnularLog={handleToggleAnularLog} procedures={procedures} config={config} />}
+                            {activeTab === 'admin' && <AdminView residents={residents} onAddResident={handleAddResident} medicosPlanta={medicosPlanta} onAddMedicoPlanta={handleAddMedicoPlanta} systemUsers={systemUsers} onToggleUserStatus={handleToggleUserStatus} onDeleteUser={handleDeleteUser} logs={logs} onToggleAnularLog={handleToggleAnularLog} procedures={procedures} onAddProcedure={handleAddProcedure} onDeleteProcedure={handleDeleteProcedure} onChangeProcedureComplexity={handleUpdateProcedureComplexity} onAssignResident={handleAssignResident} onUpdateResident={handleAdminUpdateResident} config={config} onUpdateConfig={handleUpdateConfig} />}
+                        </main>
+
+                        <nav className="fixed bottom-0 w-full max-w-md bg-white border-t border-slate-200 flex justify-around p-2 pb-safe z-30 shadow-2xl">
+                            {currentUser.role === 'medico' ? (
+                                <>
+                                    <button onClick={() => setActiveTab('medico_planta')} className={`flex flex-col items-center p-2 transition-colors ${activeTab === 'medico_planta' ? 'text-indigo-600 font-bold' : 'text-slate-400'}`}>{Icons.User}<span className="text-[10px] font-bold mt-1">Alumnos a Cargo</span></button>
+                                    <button onClick={() => setActiveTab('report')} className={`flex flex-col items-center p-2 transition-colors ${activeTab === 'report' ? 'text-indigo-600 font-bold' : 'text-slate-400'}`}>{Icons.Report}<span className="text-[10px] font-bold mt-1">Reporte Institucional</span></button>
+                                </>
+                            ) : currentUser.role === 'admin' ? (
+                                <>
+                                    <button onClick={() => setActiveTab('admin')} className={`flex flex-col items-center p-2 transition-colors ${activeTab === 'admin' ? 'text-amber-600 font-bold' : 'text-slate-400'}`}>{Icons.Dashboard}<span className="text-[10px] font-bold mt-1">Administración</span></button>
+                                    <button onClick={() => setActiveTab('medico_planta')} className={`flex flex-col items-center p-2 transition-colors ${activeTab === 'medico_planta' ? 'text-amber-600 font-bold' : 'text-slate-400'}`}>{Icons.User}<span className="text-[10px] font-bold mt-1">Supervisión Planta</span></button>
+                                    <button onClick={() => setActiveTab('report')} className={`flex flex-col items-center p-2 transition-colors ${activeTab === 'report' ? 'text-amber-600 font-bold' : 'text-slate-400'}`}>{Icons.Report}<span className="text-[10px] font-bold mt-1">Reporte General</span></button>
+                                </>
+                            ) : (
+                                <>
+                                    <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center p-2 transition-colors ${activeTab === 'dashboard' ? 'text-blue-600' : 'text-slate-400'}`}>{Icons.Dashboard}<span className="text-[10px] font-bold mt-1">Mi Progreso</span></button>
+                                    <div className="relative -top-5"><button onClick={() => setActiveTab('log')} className={`flex items-center justify-center w-14 h-14 rounded-full text-white shadow-xl transition-transform transform active:scale-95 ${activeTab === 'log' ? 'bg-blue-700 scale-105 ring-4 ring-blue-100' : 'bg-blue-600'}`}>{Icons.Plus}</button></div>
+                                    <button onClick={() => setActiveTab('report')} className={`flex flex-col items-center p-2 transition-colors ${activeTab === 'report' ? 'text-blue-600' : 'text-slate-400'}`}>{Icons.Report}<span className="text-[10px] font-bold mt-1">Reporte</span></button>
+                                </>
+                            )}
+                        </nav>
+                    </div>
+                );
+            };
+
+            const root = ReactDOM.createRoot(document.getElementById('root'));
+            root.render(
+                <ErrorBoundary>
+                    <App />
+                </ErrorBoundary>
+            );
+
+        } catch (fatalError) {
+            window.addEventListener('DOMContentLoaded', () => {
+                const errorBox = document.getElementById('error-box');
+                const errorMsg = document.getElementById('error-message');
+                if (errorBox && errorMsg) {
+                    errorBox.style.display = 'block';
+                    errorMsg.innerHTML += `<b>Error Inicial Crítico:</b> ${fatalError.message}`;
+                    console.error(fatalError);
+                }
+            });
+        }
+    </script>
+</body>
+</html>

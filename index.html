@@ -143,7 +143,7 @@
             // =========================================================================
             // INICIO DE LA APLICACIÓN REACT
             // =========================================================================
-            const { useState, useMemo, useEffect, useRef } = React;
+            const { useState, useMemo, useEffect } = React;
 
             class ErrorBoundary extends React.Component {
                 constructor(props) {
@@ -415,6 +415,45 @@
                                 style={{ width: `${percentage}%` }}
                             ></div>
                         </div>
+                    </div>
+                );
+            };
+
+            // Lista de actividades cargadas por un alumno en un mes, con botón de
+            // anular/revertir. La usan tanto la auditoría del médico como el
+            // explorador de perfiles del admin.
+            const LogAuditList = ({ logs, config, procedures, onToggleAnularLog, actorName }) => {
+                const allActs = getAllActivitiesFlat(config, procedures);
+
+                if (logs.length === 0) {
+                    return <p className="text-xs text-slate-400 py-6 text-center">No hay actividades registradas en este mes.</p>;
+                }
+
+                return (
+                    <div className="space-y-2.5">
+                        {logs.map(log => {
+                            const act = allActs.find(a => a.id === log.activityId);
+                            const actName = act ? act.name : log.activityId;
+                            const pts = act ? act.points * log.qty : 0;
+                            return (
+                                <div key={log.id} className={`p-3 rounded-xl border transition-all flex justify-between items-center ${log.anulado ? 'bg-rose-50 border-rose-200' : 'bg-slate-50 border-slate-200'}`}>
+                                    <div className="space-y-0.5">
+                                        <div className="font-bold text-xs text-slate-800 flex items-center gap-1.5">
+                                            {log.className || log.indicatorName || log.topic || actName}
+                                            {log.anulado && <span className="bg-rose-600 text-white text-[9px] px-2 py-0.5 rounded-full font-black uppercase">ANULADA</span>}
+                                        </div>
+                                        <div className="text-[10px] text-slate-500">Fecha: {log.date} {log.time ? `• ${log.time}` : ''}</div>
+                                        {log.anulado && log.anuladoPor && <div className="text-[10px] font-semibold text-rose-700">Por: {log.anuladoPor}</div>}
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        <span className={`text-xs font-black ${log.anulado ? 'line-through text-rose-500' : 'text-emerald-600'}`}>+{Math.round(pts * 10)/10} pts</span>
+                                        <button onClick={() => onToggleAnularLog(log.id, actorName)} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all ${log.anulado ? 'bg-emerald-600 text-white' : 'bg-rose-100 text-rose-700'}`}>
+                                            {log.anulado ? <>{Icons.RefreshCw} Revertir</> : <>{Icons.XCircle} Anular</>}
+                                        </button>
+                                    </div>
+                                </div>
+                            );
+                        })}
                     </div>
                 );
             };
@@ -1146,8 +1185,6 @@
                     }
                 };
 
-                const allActs = getAllActivitiesFlat(config, procedures);
-
                 return (
                     <div className="p-4 fade-in space-y-4">
                         <div className="bg-gradient-to-br from-indigo-900 to-slate-900 rounded-2xl p-5 text-white shadow-xl">
@@ -1278,35 +1315,7 @@
                                         <span className="text-xs font-bold bg-slate-100 text-slate-700 px-2.5 py-1 rounded-lg">{residentLogsForMonth.length} Registros</span>
                                     </div>
 
-                                    {residentLogsForMonth.length === 0 ? (
-                                        <p className="text-xs text-slate-400 py-6 text-center">El alumno no ha registrado actividades en este mes.</p>
-                                    ) : (
-                                        <div className="space-y-2.5">
-                                            {residentLogsForMonth.map(log => {
-                                                const act = allActs.find(a => a.id === log.activityId);
-                                                const actName = act ? act.name : log.activityId;
-                                                const pts = act ? act.points * log.qty : 0;
-                                                return (
-                                                    <div key={log.id} className={`p-3 rounded-xl border transition-all flex justify-between items-center ${log.anulado ? 'bg-rose-50 border-rose-200' : 'bg-slate-50 border-slate-200'}`}>
-                                                        <div className="space-y-0.5">
-                                                            <div className="font-bold text-xs text-slate-800 flex items-center gap-1.5">
-                                                                {log.className || log.indicatorName || log.topic || actName}
-                                                                {log.anulado && <span className="bg-rose-600 text-white text-[9px] px-2 py-0.5 rounded-full font-black uppercase">ANULADA</span>}
-                                                            </div>
-                                                            <div className="text-[10px] text-slate-500">Fecha: {log.date} {log.time ? `• ${log.time}` : ''}</div>
-                                                            {log.anulado && log.anuladoPor && <div className="text-[10px] font-semibold text-rose-700">Por: {log.anuladoPor}</div>}
-                                                        </div>
-                                                        <div className="flex items-center gap-3">
-                                                            <span className={`text-xs font-black ${log.anulado ? 'line-through text-rose-500' : 'text-emerald-600'}`}>+{Math.round(pts * 10)/10} pts</span>
-                                                            <button onClick={() => onToggleAnularLog(log.id, currentStaffDoctor)} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all ${log.anulado ? 'bg-emerald-600 text-white' : 'bg-rose-100 text-rose-700'}`}>
-                                                                {log.anulado ? <>{Icons.RefreshCw} Revertir</> : <>{Icons.XCircle} Anular</>}
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    )}
+                                    <LogAuditList logs={residentLogsForMonth} config={config} procedures={procedures} onToggleAnularLog={onToggleAnularLog} actorName={currentStaffDoctor} />
                                 </div>
                             </div>
                         )}
@@ -1693,6 +1702,130 @@
                 );
             };
 
+            // Explorador de perfiles para el Admin: buscar cualquier alumno y ver
+            // toda su ficha (datos, progreso general, y el detalle mes a mes).
+            const AdminProfilesView = ({ residents, logs, evaluations, procedures, config, onToggleAnularLog }) => {
+                const [searchQuery, setSearchQuery] = useState('');
+                const [selectedResidentId, setSelectedResidentId] = useState(null);
+                const [selectedMonth, setSelectedMonth] = useState(currentMonthYYYYMM);
+
+                const filteredResidents = useMemo(() => {
+                    const sorted = [...residents].sort((a, b) => (a.apellido || '').localeCompare(b.apellido || ''));
+                    const q = searchQuery.trim().toLowerCase();
+                    if (!q) return sorted;
+                    return sorted.filter(r => `${r.nombre} ${r.apellido} ${r.dni}`.toLowerCase().includes(q));
+                }, [residents, searchQuery]);
+
+                const selectedResident = residents.find(r => r.id === selectedResidentId);
+
+                if (!selectedResident) {
+                    return (
+                        <div className="p-4 fade-in space-y-4">
+                            <div>
+                                <h2 className="text-2xl font-bold text-slate-800">Perfiles de Alumnos</h2>
+                                <p className="text-slate-500 text-xs">Buscá un alumno para ver toda su información cargada.</p>
+                            </div>
+                            <input
+                                type="text"
+                                placeholder="Buscar por nombre, apellido o DNI..."
+                                value={searchQuery}
+                                onChange={e => setSearchQuery(e.target.value)}
+                                className="w-full bg-white border border-slate-200 rounded-xl p-3 text-sm font-medium outline-none shadow-sm"
+                            />
+                            <div className="space-y-2">
+                                {filteredResidents.length === 0 ? (
+                                    <p className="text-xs text-slate-400 text-center py-8">No se encontraron alumnos.</p>
+                                ) : filteredResidents.map(res => {
+                                    const approvedMonths = calculateResidentApprovedMonthsCount(res, logs, evaluations, procedures, config);
+                                    return (
+                                        <button
+                                            key={res.id}
+                                            type="button"
+                                            onClick={() => { setSelectedResidentId(res.id); setSelectedMonth(currentMonthYYYYMM); }}
+                                            className="w-full bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex justify-between items-center text-left hover:border-blue-400 transition-all"
+                                        >
+                                            <div>
+                                                <div className="font-bold text-slate-800 text-sm">{res.apellido}, {res.nombre}</div>
+                                                <div className="text-[10px] text-slate-500 mt-0.5">DNI: {res.dni} • Burbuja {res.burbuja} • {res.medicoPlanta || 'Sin médico asignado'}</div>
+                                            </div>
+                                            <div className="text-right shrink-0 ml-2">
+                                                <div className="text-xs font-black text-blue-600">{approvedMonths}/48</div>
+                                                <div className="text-[9px] text-slate-400 uppercase font-bold">meses</div>
+                                            </div>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    );
+                }
+
+                const progressData = getMonthProgress(selectedResident.id, selectedMonth, logs, evaluations, procedures, config);
+                const totalApprovedMonths = calculateResidentApprovedMonthsCount(selectedResident, logs, evaluations, procedures, config);
+                const residentLogsForMonth = logs.filter(l => l.residentId === selectedResident.id && l.date.startsWith(selectedMonth));
+                const overallPercentage = Math.min(100, Math.round((totalApprovedMonths / 48) * 100));
+
+                return (
+                    <div className="p-4 fade-in space-y-4">
+                        <button type="button" onClick={() => setSelectedResidentId(null)} className="text-xs font-bold text-slate-500 hover:text-slate-800">
+                            ← Volver a la búsqueda
+                        </button>
+
+                        <div className="bg-gradient-to-br from-slate-900 to-indigo-950 rounded-2xl p-6 text-white shadow-lg">
+                            <h1 className="text-2xl font-black">{selectedResident.nombre} {selectedResident.apellido}</h1>
+                            <div className="text-xs opacity-90 mt-2 flex flex-wrap gap-2">
+                                <span className="bg-white/10 px-2.5 py-1 rounded-md">DNI: {selectedResident.dni}</span>
+                                <span className="bg-white/10 px-2.5 py-1 rounded-md">{selectedResident.tipo}</span>
+                                <span className="bg-white/10 px-2.5 py-1 rounded-md">Burbuja {selectedResident.burbuja}</span>
+                                {selectedResident.universidad && <span className="bg-white/10 px-2.5 py-1 rounded-md">{selectedResident.universidad}</span>}
+                            </div>
+                            <div className="text-xs opacity-80 mt-3 space-y-1">
+                                {selectedResident.mail && <div>✉️ {selectedResident.mail}</div>}
+                                {selectedResident.celular && <div>📱 {selectedResident.celular}</div>}
+                                <div>👨‍⚕️ Médico a cargo: {selectedResident.medicoPlanta || 'Sin asignar'}</div>
+                                {selectedResident.fechaIngreso && <div>📅 Ingreso: {selectedResident.fechaIngreso}</div>}
+                            </div>
+                        </div>
+
+                        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                            <div className="flex justify-between items-center mb-2">
+                                <h3 className="font-bold text-slate-800 text-sm">Progreso General de Formación</h3>
+                                <span className="text-xs font-black text-blue-600">{totalApprovedMonths} / 48 meses</span>
+                            </div>
+                            <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+                                <div className="h-3 rounded-full bg-blue-500 transition-all duration-1000 ease-out" style={{ width: `${overallPercentage}%` }}></div>
+                            </div>
+                        </div>
+
+                        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Mes a Revisar</label>
+                            <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 outline-none" />
+                            <div className="flex justify-between items-center mt-3">
+                                <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase ${progressData.isApproved ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                                    {progressData.isApproved ? 'Mes Aprobado' : 'Mes Pendiente'}
+                                </span>
+                                <span className="text-sm font-black text-indigo-600">{progressData.totalPointsOverall} pts válidos</span>
+                            </div>
+                        </div>
+
+                        <div className="space-y-3">
+                            <h3 className="font-bold text-slate-800 text-sm">Requisitos de {getMonthName(selectedMonth)}</h3>
+                            {progressData.goalsProgress.map(goal => (
+                                <ProgressBar key={goal.id} label={goal.name} current={goal.currentPoints} required={goal.requiredPoints} />
+                            ))}
+                        </div>
+
+                        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                            <div className="border-b pb-2 mb-3 flex justify-between items-center">
+                                <h3 className="font-bold text-slate-800 text-sm">Actividades Cargadas</h3>
+                                <span className="text-xs font-bold bg-slate-100 text-slate-700 px-2.5 py-1 rounded-lg">{residentLogsForMonth.length} Registros</span>
+                            </div>
+                            <LogAuditList logs={residentLogsForMonth} config={config} procedures={procedures} onToggleAnularLog={onToggleAnularLog} actorName="Admin" />
+                        </div>
+                    </div>
+                );
+            };
+
             const AuthView = ({ onRegister }) => {
                 const [mode, setMode] = useState('login');
                 const [dni, setDni] = useState('');
@@ -1808,9 +1941,6 @@
 
                 const [currentUser, setCurrentUser] = useState(null);
                 const [activeTab, setActiveTab] = useState('dashboard');
-                const [idleNotice, setIdleNotice] = useState(false);
-
-                const inactivityTimerRef = useRef(null);
                 const [authUser, setAuthUser] = useState(undefined); // undefined = todavía no se sabe, null = sin sesión
 
                 // Los médicos de planta se deducen dinámicamente de los usuarios reales.
@@ -1863,27 +1993,6 @@
                     };
                 }, [authUser]);
 
-                const resetInactivityTimer = () => {
-                    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
-                    if (currentUser) {
-                        inactivityTimerRef.current = setTimeout(() => {
-                            handleLogout();
-                            setIdleNotice(true);
-                        }, 180000);
-                    }
-                };
-
-                useEffect(() => {
-                    const events = ['mousemove', 'keydown', 'click', 'touchstart', 'scroll'];
-                    const handleUserActivity = () => resetInactivityTimer();
-                    events.forEach(ev => window.addEventListener(ev, handleUserActivity));
-                    resetInactivityTimer();
-                    return () => {
-                        if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
-                        events.forEach(ev => window.removeEventListener(ev, handleUserActivity));
-                    };
-                }, [currentUser?.dni]);
-
                 // El usuario logueado se deduce de la sesión real de Firebase Auth + su
                 // perfil en Firestore (ya no hay contraseñas guardadas ni comparadas a mano).
                 useEffect(() => {
@@ -1911,7 +2020,6 @@
 
                 useEffect(() => {
                     if (!currentUser) return;
-                    setIdleNotice(false);
                     setActiveTab(currentUser.role === 'medico' ? 'medico_planta' : currentUser.role === 'admin' ? 'admin' : 'dashboard');
                 }, [currentUser?.dni]);
 
@@ -2080,12 +2188,7 @@
                 };
 
                 if (!currentUser) {
-                    return (
-                        <div>
-                            {idleNotice && <div className="bg-amber-500 text-white text-xs font-bold p-2 text-center sticky top-0 z-50">🔒 Sesión cerrada automáticamente por pasar 3 minutos sin actividad.</div>}
-                            <AuthView onRegister={handleRegisterUser} />
-                        </div>
-                    );
+                    return <AuthView onRegister={handleRegisterUser} />;
                 }
 
                 return (
@@ -2115,6 +2218,7 @@
                             {activeTab === 'log' && <LogActivityView currentResident={activeResident} onAddLog={handleAddLog} publishedClasses={publishedClasses} onPublishClass={handlePublishClass} logs={logs} isUserDisabled={isCurrentDisabled} procedures={procedures} config={config} />}
                             {activeTab === 'report' && <ReportView logs={logs} residents={residents} evaluations={evaluations} onSaveEvaluation={handleSaveEvaluation} activeRole={currentUser.role} currentStaffDoctor={activeStaffDoctor} onToggleAnularLog={handleToggleAnularLog} procedures={procedures} config={config} />}
                             {activeTab === 'admin' && <AdminView residents={residents} onAddResident={handleAddResident} medicosPlanta={medicosPlanta} onAddMedicoPlanta={handleAddMedicoPlanta} systemUsers={systemUsers} onToggleUserStatus={handleToggleUserStatus} onDeleteUser={handleDeleteUser} logs={logs} onToggleAnularLog={handleToggleAnularLog} procedures={procedures} onAddProcedure={handleAddProcedure} onDeleteProcedure={handleDeleteProcedure} onChangeProcedureComplexity={handleUpdateProcedureComplexity} onAssignResident={handleAssignResident} onUpdateResident={handleAdminUpdateResident} config={config} onUpdateConfig={handleUpdateConfig} />}
+                            {activeTab === 'perfiles' && currentUser.role === 'admin' && <AdminProfilesView residents={residents} logs={logs} evaluations={evaluations} procedures={procedures} config={config} onToggleAnularLog={handleToggleAnularLog} />}
                         </main>
 
                         <nav className="fixed bottom-0 w-full max-w-md bg-white border-t border-slate-200 flex justify-around p-2 pb-safe z-30 shadow-2xl">
@@ -2126,7 +2230,7 @@
                             ) : currentUser.role === 'admin' ? (
                                 <>
                                     <button onClick={() => setActiveTab('admin')} className={`flex flex-col items-center p-2 transition-colors ${activeTab === 'admin' ? 'text-amber-600 font-bold' : 'text-slate-400'}`}>{Icons.Dashboard}<span className="text-[10px] font-bold mt-1">Administración</span></button>
-                                    <button onClick={() => setActiveTab('medico_planta')} className={`flex flex-col items-center p-2 transition-colors ${activeTab === 'medico_planta' ? 'text-amber-600 font-bold' : 'text-slate-400'}`}>{Icons.User}<span className="text-[10px] font-bold mt-1">Supervisión Planta</span></button>
+                                    <button onClick={() => setActiveTab('perfiles')} className={`flex flex-col items-center p-2 transition-colors ${activeTab === 'perfiles' ? 'text-amber-600 font-bold' : 'text-slate-400'}`}>{Icons.Book}<span className="text-[10px] font-bold mt-1">Perfiles</span></button>
                                     <button onClick={() => setActiveTab('report')} className={`flex flex-col items-center p-2 transition-colors ${activeTab === 'report' ? 'text-amber-600 font-bold' : 'text-slate-400'}`}>{Icons.Report}<span className="text-[10px] font-bold mt-1">Reporte General</span></button>
                                 </>
                             ) : (

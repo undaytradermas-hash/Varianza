@@ -502,13 +502,6 @@
                 const completionPercent = Math.min(100, Math.round((totalActivityPts / requiredActivityPts) * 100));
                 const isUnder75Percent = todayDay >= 25 && completionPercent < 75;
 
-                const cleanPhone = (currentResident.celular || '').replace(/\D/g, '');
-                const waMessage = encodeURIComponent(`Hola ${currentResident.nombre}, te recordamos que al día ${todayDay} registras un ${completionPercent}% del puntaje mensual requerido (${totalActivityPts}/${requiredActivityPts} pts). Por favor completa tus cargas en Escuelita Bicentenario Log.`);
-                const waUrl = cleanPhone ? `https://wa.me/549${cleanPhone}?text=${waMessage}` : '#';
-                const mailSubject = encodeURIComponent(`Alerta de Rendimiento Mensual - Escuelita Bicentenario Log`);
-                const mailBody = encodeURIComponent(`Estimado/a ${currentResident.nombre} ${currentResident.apellido},\n\nAl día ${todayDay} del mes registras ${totalActivityPts} de ${requiredActivityPts} puntos requeridos (${completionPercent}%). Te solicitamos ingresar a la aplicación y registrar las actividades faltantes.\n\nAtentamente,\nEscuelita Bicentenario Log`);
-                const mailUrl = currentResident.mail ? `mailto:${currentResident.mail}?subject=${mailSubject}&body=${mailBody}` : '#';
-
                 return (
                     <div className="p-4 fade-in">
                         {isUnder75Percent && (
@@ -522,27 +515,6 @@
                                         <p className="text-xs font-semibold text-rose-800 mt-0.5">
                                             Llevas <span className="font-black text-rose-950 underline">{completionPercent}%</span> del puntaje requerido ({totalActivityPts} / {requiredActivityPts} pts). Estás por debajo del 75% estipulado para esta fecha del mes.
                                         </p>
-
-                                        <div className="flex flex-wrap gap-2 mt-3">
-                                            {currentResident.celular && (
-                                                <a
-                                                    href={waUrl}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-xl text-[11px] flex items-center gap-1.5 shadow-sm"
-                                                >
-                                                    {Icons.WhatsApp} Notificar WhatsApp
-                                                </a>
-                                            )}
-                                            {currentResident.mail && (
-                                                <a
-                                                    href={mailUrl}
-                                                    className="bg-slate-800 hover:bg-slate-900 text-white font-bold px-3 py-1.5 rounded-xl text-[11px] flex items-center gap-1.5 shadow-sm"
-                                                >
-                                                    {Icons.Mail} Notificar Email
-                                                </a>
-                                            )}
-                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -1765,11 +1737,54 @@
                 const residentLogsForMonth = logs.filter(l => l.residentId === selectedResident.id && l.date.startsWith(selectedMonth));
                 const overallPercentage = Math.min(100, Math.round((totalApprovedMonths / 48) * 100));
 
+                // La alerta de "va atrasado" solo tiene sentido mirando el mes en curso
+                // (un mes ya cerrado no se puede "avisar a tiempo").
+                const todayDay = new Date().getDate();
+                const totalActivityPts = progressData.totalPointsOverall - progressData.staffScore;
+                const requiredActivityPts = getRequiredActivityPts();
+                const completionPercent = Math.min(100, Math.round((totalActivityPts / requiredActivityPts) * 100));
+                const isUnder75Percent = selectedMonth === currentMonthYYYYMM && todayDay >= 25 && completionPercent < 75;
+
+                const cleanPhone = (selectedResident.celular || '').replace(/\D/g, '');
+                const waMessage = encodeURIComponent(`Hola ${selectedResident.nombre}, te recordamos que al día ${todayDay} registras un ${completionPercent}% del puntaje mensual requerido (${totalActivityPts}/${requiredActivityPts} pts). Por favor completa tus cargas en Escuelita Bicentenario Log.`);
+                const waUrl = cleanPhone ? `https://wa.me/549${cleanPhone}?text=${waMessage}` : '#';
+                const mailSubject = encodeURIComponent(`Alerta de Rendimiento Mensual - Escuelita Bicentenario Log`);
+                const mailBody = encodeURIComponent(`Estimado/a ${selectedResident.nombre} ${selectedResident.apellido},\n\nAl día ${todayDay} del mes registras ${totalActivityPts} de ${requiredActivityPts} puntos requeridos (${completionPercent}%). Te solicitamos ingresar a la aplicación y registrar las actividades faltantes.\n\nAtentamente,\nEscuelita Bicentenario Log`);
+                const mailUrl = selectedResident.mail ? `mailto:${selectedResident.mail}?subject=${mailSubject}&body=${mailBody}` : '#';
+
                 return (
                     <div className="p-4 fade-in space-y-4">
                         <button type="button" onClick={() => setSelectedResidentId(null)} className="text-xs font-bold text-slate-500 hover:text-slate-800">
                             ← Volver a la búsqueda
                         </button>
+
+                        {isUnder75Percent && (
+                            <div className="bg-rose-50 border-2 border-rose-300 rounded-2xl p-4 shadow-sm slide-up">
+                                <div className="flex items-start gap-2.5">
+                                    <span className="text-2xl">⚠️</span>
+                                    <div className="flex-1">
+                                        <h3 className="font-extrabold text-xs text-rose-900 uppercase tracking-wide">
+                                            Alerta de Avance Mensual (Día 25)
+                                        </h3>
+                                        <p className="text-xs font-semibold text-rose-800 mt-0.5">
+                                            Lleva <span className="font-black text-rose-950 underline">{completionPercent}%</span> del puntaje requerido ({totalActivityPts} / {requiredActivityPts} pts). Está por debajo del 75% estipulado para esta fecha del mes.
+                                        </p>
+                                        <div className="flex flex-wrap gap-2 mt-3">
+                                            {selectedResident.celular && (
+                                                <a href={waUrl} target="_blank" rel="noopener noreferrer" className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-xl text-[11px] flex items-center gap-1.5 shadow-sm">
+                                                    {Icons.WhatsApp} Notificar WhatsApp
+                                                </a>
+                                            )}
+                                            {selectedResident.mail && (
+                                                <a href={mailUrl} className="bg-slate-800 hover:bg-slate-900 text-white font-bold px-3 py-1.5 rounded-xl text-[11px] flex items-center gap-1.5 shadow-sm">
+                                                    {Icons.Mail} Notificar Email
+                                                </a>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
                         <div className="bg-gradient-to-br from-slate-900 to-indigo-950 rounded-2xl p-6 text-white shadow-lg">
                             <h1 className="text-2xl font-black">{selectedResident.nombre} {selectedResident.apellido}</h1>

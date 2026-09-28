@@ -229,7 +229,8 @@
                     { id: 'gest_1', name: 'Solo junté los datos', points: 1 },
                     { id: 'gest_2', name: 'Lo hice y lo subí', points: 2 },
                     { id: 'gest_3', name: 'Lo hice, lo subí y lo presenté', points: 3 }
-                ]
+                ],
+                burbujas: ['A', 'B1', 'B2', 'C']
             };
 
             const GOALS = [
@@ -1404,6 +1405,7 @@
 
                 const [adminProcName, setAdminProcName] = useState('');
                 const [adminProcComplexity, setAdminProcComplexity] = useState('baja');
+                const [newBurbujaName, setNewBurbujaName] = useState('');
                 const [deleteModalStep, setDeleteModalStep] = useState(0);
                 const [selectedUserToDelete, setSelectedUserToDelete] = useState(null);
                 const [editForm, setEditForm] = useState(null);
@@ -1464,6 +1466,18 @@
                     onUpdateConfig({ ...config, [category]: updatedArray });
                 };
 
+                const handleAddBurbuja = (e) => {
+                    e.preventDefault();
+                    const name = newBurbujaName.trim();
+                    if (!name || (config.burbujas || []).includes(name)) return;
+                    onUpdateConfig({ ...config, burbujas: [...(config.burbujas || []), name] });
+                    setNewBurbujaName('');
+                };
+
+                const handleDeleteBurbuja = (name) => {
+                    onUpdateConfig({ ...config, burbujas: (config.burbujas || []).filter(b => b !== name) });
+                };
+
                 return (
                     <div className="p-4 fade-in space-y-6">
                         <div>
@@ -1490,7 +1504,7 @@
                                     {medicosPlanta.map(m => <option key={m} value={m}>{m}</option>)}
                                 </select>
                                 <select value={newBurbuja} onChange={e => setNewBurbuja(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs">
-                                    <option value="A">Burbuja A</option><option value="B1">Burbuja B1</option><option value="B2">Burbuja B2</option><option value="C">Burbuja C</option>
+                                    {(config.burbujas || []).map(b => <option key={b} value={b}>Burbuja {b}</option>)}
                                 </select>
                             </div>
                             <div className="bg-amber-50 p-3 rounded-xl border border-amber-200">
@@ -1516,7 +1530,7 @@
                             <h3 className="font-bold text-slate-800 text-sm border-b pb-2">Configuración Dinámica de Puntajes</h3>
                             <p className="text-[10px] text-slate-500 mb-4">Edita cuánto vale cada actividad. Los cambios aplican para todos al instante.</p>
 
-                            {Object.keys(config).map(category => (
+                            {Object.keys(config).filter(category => category !== 'burbujas').map(category => (
                                 <div key={category} className="mb-4">
                                     <h4 className="font-bold text-[11px] uppercase text-indigo-700 mb-1.5">{category.replace('_', ' ')}</h4>
                                     <div className="space-y-1">
@@ -1537,6 +1551,23 @@
                                 </div>
                             ))}
                         </div>
+
+                        <form onSubmit={handleAddBurbuja} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-3">
+                            <h3 className="font-bold text-slate-800 text-sm border-b pb-2">Gestión de Burbujas</h3>
+                            <div className="flex flex-wrap gap-2">
+                                {(config.burbujas || []).map(b => (
+                                    <span key={b} className="bg-slate-100 text-slate-700 text-xs font-bold px-3 py-1.5 rounded-full flex items-center gap-1.5">
+                                        Burbuja {b}
+                                        <button type="button" onClick={() => handleDeleteBurbuja(b)} className="text-slate-400 hover:text-rose-600 font-black leading-none">×</button>
+                                    </span>
+                                ))}
+                                {(config.burbujas || []).length === 0 && <p className="text-xs text-slate-400">No hay burbujas cargadas.</p>}
+                            </div>
+                            <div className="flex gap-2">
+                                <input type="text" placeholder="Nombre (Ej. D)" value={newBurbujaName} onChange={e => setNewBurbujaName(e.target.value)} className="flex-1 bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold outline-none" />
+                                <button type="submit" className="bg-slate-900 text-white font-bold px-4 rounded-xl text-xs">Agregar</button>
+                            </div>
+                        </form>
 
                         <form onSubmit={handleCreateProcedureByAdmin} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-3">
                             <div className="border-b pb-2"><h3 className="font-bold text-slate-800 text-sm">Catálogo de Procedimientos</h3></div>
@@ -1587,7 +1618,7 @@
                                             {resident && (
                                                 <div className="flex gap-2 pt-2 border-t border-slate-200">
                                                     <select value={resident.burbuja || 'A'} onChange={e => onAssignResident(resident.id, 'burbuja', e.target.value)} className="flex-1 bg-white border border-slate-200 rounded-lg p-1.5 text-[11px] font-bold">
-                                                        <option value="A">Burbuja A</option><option value="B1">Burbuja B1</option><option value="B2">Burbuja B2</option><option value="C">Burbuja C</option>
+                                                        {(config.burbujas || []).map(b => <option key={b} value={b}>Burbuja {b}</option>)}
                                                     </select>
                                                     <select value={resident.medicoPlanta || ''} onChange={e => onAssignResident(resident.id, 'medicoPlanta', e.target.value)} className="flex-1 bg-white border border-slate-200 rounded-lg p-1.5 text-[11px] font-bold text-blue-700">
                                                         <option value="">-- Sin Asignar --</option>
@@ -1628,7 +1659,7 @@
                                                     {medicosPlanta.map(m => <option key={m} value={m}>{m}</option>)}
                                                 </select>
                                                 <select value={editForm.burbuja} onChange={e => handleEditFieldChange('burbuja', e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs">
-                                                    <option value="A">Burbuja A</option><option value="B1">Burbuja B1</option><option value="B2">Burbuja B2</option><option value="C">Burbuja C</option>
+                                                    {(config.burbujas || []).map(b => <option key={b} value={b}>Burbuja {b}</option>)}
                                                 </select>
                                             </div>
                                             <div className="bg-amber-50 p-3 rounded-xl border border-amber-200">

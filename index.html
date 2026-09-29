@@ -631,7 +631,7 @@
                 );
             };
 
-            const LogActivityView = ({ currentResident, onAddLog, publishedClasses, onPublishClass, logs, isUserDisabled, procedures, config }) => {
+            const LogActivityView = ({ currentResident, onAddLog, publishedClasses, onPublishClass, logs, isUserDisabled, procedures, onAddProcedure, config }) => {
                 const [activeSubTab, setActiveSubTab] = useState('planta');
 
                 const [plantaActivityId, setPlantaActivityId] = useState(config.planta[0]?.id || '');
@@ -658,6 +658,9 @@
                 const [selectedProcedureId, setSelectedProcedureId] = useState(procedures[0]?.id || '');
                 const [procedureQty, setProcedureQty] = useState(1);
                 const [procedureDate, setProcedureDate] = useState(new Date().toISOString().split('T')[0]);
+                const [isAddingProcedure, setIsAddingProcedure] = useState(false);
+                const [newProcName, setNewProcName] = useState('');
+                const [newProcComplexity, setNewProcComplexity] = useState('baja');
 
                 const [dictadaType, setDictadaType] = useState('cd_simple');
                 const [classNameInput, setClassNameInput] = useState('');
@@ -747,6 +750,16 @@
                         complexity: proc ? proc.complexity : 'baja'
                     });
                     triggerFeedback('btn-proc');
+                };
+
+                const handleCreateNewProcedure = (e) => {
+                    e.preventDefault();
+                    if (isUserDisabled || !newProcName.trim()) return;
+                    const newId = 'proc_' + Date.now();
+                    onAddProcedure({ id: newId, name: newProcName.trim(), complexity: newProcComplexity, points: newProcComplexity === 'alta' ? 0.2 : 0.1 });
+                    setSelectedProcedureId(newId);
+                    setNewProcName('');
+                    setIsAddingProcedure(false);
                 };
 
                 const handleDictadaSubmit = (e) => {
@@ -920,14 +933,32 @@
                                 </div>
                                 <div>
                                     <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Procedimiento</label>
-                                    {procedures.length === 0 ? (
-                                        <p className="text-xs text-slate-400 bg-slate-50 p-3 rounded-xl border border-slate-200 font-medium">No hay procedimientos disponibles. Un Médico de Planta o Administrador puede agregar nuevos.</p>
-                                    ) : (
+                                    {procedures.length > 0 && (
                                         <select value={selectedProcedureId} onChange={e => setSelectedProcedureId(e.target.value)} required disabled={isUserDisabled} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-bold outline-none disabled:opacity-50 cursor-pointer">
                                             {procedures.map(p => (
                                                 <option key={p.id} value={p.id}>{p.name} — [{p.complexity === 'alta' ? 'Alta Complejidad' : 'Baja Complejidad'} - {p.points} pts]</option>
                                             ))}
                                         </select>
+                                    )}
+                                    {procedures.length === 0 && !isAddingProcedure && (
+                                        <p className="text-xs text-slate-400 bg-slate-50 p-3 rounded-xl border border-slate-200 font-medium">Todavía no hay procedimientos cargados.</p>
+                                    )}
+                                    {!isAddingProcedure ? (
+                                        <button type="button" onClick={() => setIsAddingProcedure(true)} disabled={isUserDisabled} className="text-[11px] font-bold text-blue-600 mt-2 disabled:opacity-50">
+                                            + ¿No está en la lista? Agregalo
+                                        </button>
+                                    ) : (
+                                        <div className="mt-2 bg-blue-50/70 border border-blue-200 rounded-xl p-3 space-y-2">
+                                            <input type="text" placeholder="Nombre del procedimiento" value={newProcName} onChange={e => setNewProcName(e.target.value)} className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-bold outline-none" />
+                                            <div className="flex gap-2">
+                                                <select value={newProcComplexity} onChange={e => setNewProcComplexity(e.target.value)} className="flex-1 bg-white border border-slate-200 rounded-lg p-2 text-xs font-bold outline-none">
+                                                    <option value="baja">Baja Complejidad (0.1 pt)</option>
+                                                    <option value="alta">Alta Complejidad (0.2 pt)</option>
+                                                </select>
+                                                <button type="button" onClick={handleCreateNewProcedure} className="bg-blue-600 text-white font-bold px-3 rounded-lg text-xs shrink-0">Crear</button>
+                                                <button type="button" onClick={() => { setIsAddingProcedure(false); setNewProcName(''); }} className="bg-slate-200 text-slate-600 font-bold px-3 rounded-lg text-xs shrink-0">✕</button>
+                                            </div>
+                                        </div>
                                     )}
                                 </div>
                                 <div>
@@ -938,7 +969,7 @@
                                     <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Fecha</label>
                                     <input type="date" value={procedureDate} onChange={e => setProcedureDate(e.target.value)} required disabled={isUserDisabled} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-medium outline-none disabled:opacity-50" />
                                 </div>
-                                <button id="btn-proc" type="submit" disabled={isUserDisabled || procedures.length === 0} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold p-4 rounded-xl transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed">Registrar Procedimiento</button>
+                                <button id="btn-proc" type="submit" disabled={isUserDisabled || !selectedProcedureId} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold p-4 rounded-xl transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed">Registrar Procedimiento</button>
                             </form>
                         )}
 
@@ -1386,7 +1417,7 @@
                 );
             };
 
-            const AdminView = ({ residents, onAddResident, medicosPlanta, onAddMedicoPlanta, systemUsers, onToggleUserStatus, onDeleteUser, logs, onToggleAnularLog, procedures, onAddProcedure, onDeleteProcedure, onChangeProcedureComplexity, onAssignResident, onUpdateResident, config, onUpdateConfig }) => {
+            const AdminView = ({ residents, onAddResident, medicosPlanta, onAddMedicoPlanta, systemUsers, onToggleUserStatus, onDeleteUser, logs, evaluations, onToggleAnularLog, procedures, onAddProcedure, onDeleteProcedure, onChangeProcedureComplexity, onAssignResident, onUpdateResident, config, onUpdateConfig }) => {
                 const [newNombre, setNewNombre] = useState('');
                 const [newApellido, setNewApellido] = useState('');
                 const [newMail, setNewMail] = useState('');
@@ -1476,6 +1507,32 @@
 
                 const handleDeleteBurbuja = (name) => {
                     onUpdateConfig({ ...config, burbujas: (config.burbujas || []).filter(b => b !== name) });
+                };
+
+                const escapeCsvCell = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+
+                const handleExportExcel = () => {
+                    const headers = ['DNI', 'Nombre', 'Apellido', 'Tipo', 'Universidad', 'Celular', 'Mail', 'Burbuja', 'Médico a Cargo', 'Meses Previos Aprobados', 'Meses Aprobados (Total)', 'Estado de Cuenta'];
+                    const rows = residents.map(res => {
+                        const usr = systemUsers.find(u => u.dni === res.dni);
+                        const mesesAprobados = calculateResidentApprovedMonthsCount(res, logs, evaluations, procedures, config);
+                        return [
+                            res.dni, res.nombre, res.apellido, res.tipo, res.universidad, res.celular, res.mail,
+                            res.burbuja, res.medicoPlanta || 'Sin Asignar', res.mesesPreviosAprobados || 0,
+                            mesesAprobados, usr && usr.disabled ? 'Inhabilitado' : 'Activo'
+                        ];
+                    });
+                    // BOM al principio para que Excel muestre bien las tildes/ñ.
+                    const csv = '﻿' + [headers, ...rows].map(row => row.map(escapeCsvCell).join(',')).join('\r\n');
+                    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = `alumnos_escuelita_${new Date().toISOString().split('T')[0]}.csv`;
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+                    URL.revokeObjectURL(url);
                 };
 
                 return (
@@ -1594,7 +1651,12 @@
                         </form>
 
                         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-3">
-                            <h3 className="font-bold text-slate-800 text-sm border-b pb-2">Gestión de Usuarios</h3>
+                            <div className="flex justify-between items-center border-b pb-2">
+                                <h3 className="font-bold text-slate-800 text-sm">Gestión de Usuarios</h3>
+                                <button type="button" onClick={handleExportExcel} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-[11px] flex items-center gap-1.5 shadow-sm">
+                                    {Icons.Report} Exportar a Excel
+                                </button>
+                            </div>
                             <div className="space-y-2">
                                 {systemUsers.map(usr => {
                                     const resident = usr.role === 'alumno' ? residents.find(r => r.id === usr.residentId) : null;
@@ -2261,9 +2323,9 @@
                         <main className="flex-grow">
                             {currentUser.role === 'medico' && activeTab === 'medico_planta' && <MedicoPlantaView currentStaffDoctor={activeStaffDoctor} residents={residents} logs={logs} evaluations={evaluations} onSaveEvaluation={handleSaveEvaluation} onToggleAnularLog={handleToggleAnularLog} activeRole={currentUser.role} procedures={procedures} onAddProcedure={handleAddProcedure} medicosPlanta={medicosPlanta} onAssignResident={handleAssignResident} config={config} />}
                             {activeTab === 'dashboard' && currentUser.role === 'alumno' && <DashboardView currentResident={activeResident} currentMonthYYYYMM={currentMonthYYYYMM} logs={logs} evaluations={evaluations} procedures={procedures} onUpdateProfile={handleUpdateOwnProfile} medicosPlanta={medicosPlanta} config={config} />}
-                            {activeTab === 'log' && <LogActivityView currentResident={activeResident} onAddLog={handleAddLog} publishedClasses={publishedClasses} onPublishClass={handlePublishClass} logs={logs} isUserDisabled={isCurrentDisabled} procedures={procedures} config={config} />}
+                            {activeTab === 'log' && <LogActivityView currentResident={activeResident} onAddLog={handleAddLog} publishedClasses={publishedClasses} onPublishClass={handlePublishClass} logs={logs} isUserDisabled={isCurrentDisabled} procedures={procedures} onAddProcedure={handleAddProcedure} config={config} />}
                             {activeTab === 'report' && <ReportView logs={logs} residents={residents} evaluations={evaluations} onSaveEvaluation={handleSaveEvaluation} activeRole={currentUser.role} currentStaffDoctor={activeStaffDoctor} onToggleAnularLog={handleToggleAnularLog} procedures={procedures} config={config} />}
-                            {activeTab === 'admin' && <AdminView residents={residents} onAddResident={handleAddResident} medicosPlanta={medicosPlanta} onAddMedicoPlanta={handleAddMedicoPlanta} systemUsers={systemUsers} onToggleUserStatus={handleToggleUserStatus} onDeleteUser={handleDeleteUser} logs={logs} onToggleAnularLog={handleToggleAnularLog} procedures={procedures} onAddProcedure={handleAddProcedure} onDeleteProcedure={handleDeleteProcedure} onChangeProcedureComplexity={handleUpdateProcedureComplexity} onAssignResident={handleAssignResident} onUpdateResident={handleAdminUpdateResident} config={config} onUpdateConfig={handleUpdateConfig} />}
+                            {activeTab === 'admin' && <AdminView residents={residents} onAddResident={handleAddResident} medicosPlanta={medicosPlanta} onAddMedicoPlanta={handleAddMedicoPlanta} systemUsers={systemUsers} onToggleUserStatus={handleToggleUserStatus} onDeleteUser={handleDeleteUser} logs={logs} evaluations={evaluations} onToggleAnularLog={handleToggleAnularLog} procedures={procedures} onAddProcedure={handleAddProcedure} onDeleteProcedure={handleDeleteProcedure} onChangeProcedureComplexity={handleUpdateProcedureComplexity} onAssignResident={handleAssignResident} onUpdateResident={handleAdminUpdateResident} config={config} onUpdateConfig={handleUpdateConfig} />}
                             {activeTab === 'perfiles' && currentUser.role === 'admin' && <AdminProfilesView residents={residents} logs={logs} evaluations={evaluations} procedures={procedures} config={config} onToggleAnularLog={handleToggleAnularLog} />}
                         </main>
 

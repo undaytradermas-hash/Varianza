@@ -123,20 +123,54 @@
             const db = firebase.firestore();
             const auth = firebase.auth();
 
-            // El login usa DNI, pero Firebase Auth necesita un "email". Se arma uno
-            // interno (no se envía correo real) para no tocar la UX de DNI+contraseña.
-            const dniToPseudoEmail = (dni) => `${(dni || '').replace(/\D/g, '')}@escuelita-bicentenario-log.local`;
+            const normalizeDni = (dni) => (dni || '').replace(/\D/g, '');
+            const normalizeEmail = (email) => (email || '').trim().toLowerCase();
 
-            // Crear un usuario nuevo (alta hecha por Admin/Médico) sin cerrar la sesión
-            // de quien está logueado: Firebase Auth loguea automáticamente a cualquier
+            // Cuentas viejas (antes de pedir mail) usan un "email" interno armado con el
+            // DNI, que no recibe correos. Las nuevas usan el mail real de la persona.
+            const dniToPseudoEmail = (dni) => `${normalizeDni(dni)}@escuelita-bicentenario-log.local`;
+            const isPseudoEmail = (email) => (email || '').endsWith('@escuelita-bicentenario-log.local');
+
+            // dniLookup/{dni} = { email }: permite seguir logueando con DNI aunque la
+            // cuenta use un mail real. Es legible sin sesión (solo por DNI exacto).
+            const getLoginEmailForDni = async (dni) => {
+                try {
+                    const snap = await db.collection('dniLookup').doc(normalizeDni(dni)).get();
+                    return snap.exists ? snap.data().email : null;
+                } catch (err) {
+                    // Si las reglas de Firestore todavía no permiten leer el índice,
+                    // se sigue con el login viejo en vez de bloquear a todos.
+                    console.error('No se pudo leer dniLookup:', err);
+                    return null;
+                }
+            };
+
+            const signInWithDni = async (dni, password) => {
+                const realEmail = await getLoginEmailForDni(dni);
+                if (realEmail) {
+                    try {
+                        return await auth.signInWithEmailAndPassword(realEmail, password);
+                    } catch (err) {
+                        // Cuenta vieja que cargó su mail pero todavía no lo confirmó:
+                        // sigue entrando con el email interno hasta que lo verifique.
+                    }
+                }
+                return auth.signInWithEmailAndPassword(dniToPseudoEmail(dni), password);
+            };
+
+            // Crear un usuario nuevo (alta hecha por Admin) sin cerrar la sesión de
+            // quien está logueado: Firebase Auth loguea automáticamente a cualquier
             // cuenta recién creada en la app que la crea, así que se usa una instancia
-            // secundaria de Firebase solo para el alta.
+            // secundaria de Firebase solo para el alta. El dniLookup se escribe desde
+            // esa instancia porque las reglas solo dejan crearlo con el propio mail.
             // ponytail: sin backend (Cloud Functions) esta es la forma más simple de
             // crear cuentas ajenas desde el cliente sin perder la sesión del admin.
-            const createAuthAccountWithoutSignIn = async (dni, password) => {
+            const createAuthAccountWithoutSignIn = async (dni, email, password) => {
                 const secondaryApp = firebase.apps.find(a => a.name === 'Secondary') || firebase.initializeApp(firebaseConfig, 'Secondary');
                 const secondaryAuth = secondaryApp.auth();
-                await secondaryAuth.createUserWithEmailAndPassword(dniToPseudoEmail(dni), password);
+                const cred = await secondaryAuth.createUserWithEmailAndPassword(normalizeEmail(email), password);
+                await cred.user.sendEmailVerification();
+                await secondaryApp.firestore().collection('dniLookup').doc(normalizeDni(dni)).set({ email: normalizeEmail(email) });
                 await secondaryAuth.signOut();
             };
 
@@ -1402,6 +1436,7 @@
                 const [newMedicoName, setNewMedicoName] = useState('');
                 const [newMedicoDni, setNewMedicoDni] = useState('');
                 const [newMedicoPassword, setNewMedicoPassword] = useState('');
+                const [newMedicoEmail, setNewMedicoEmail] = useState('');
 
                 const [adminProcName, setAdminProcName] = useState('');
                 const [adminProcComplexity, setAdminProcComplexity] = useState('baja');
@@ -1448,14 +1483,16 @@
 
                 const handleCreateMedico = (e) => {
                     e.preventDefault();
-                    if (!newMedicoName.trim() || !newMedicoDni.trim()) return;
+                    if (!newMedicoName.trim() || !newMedicoDni.trim() || !newMedicoEmail.trim()) return;
                     onAddMedicoPlanta({
                         name: newMedicoName.trim(),
                         dni: newMedicoDni.trim(),
+                        email: newMedicoEmail.trim(),
                         password: newMedicoPassword.trim() || '123456'
                     });
                     setNewMedicoName('');
                     setNewMedicoDni('');
+                    setNewMedicoEmail('');
                     setNewMedicoPassword('');
                 };
 
@@ -1518,7 +1555,7 @@
                             </div>
                             <div className="grid grid-cols-2 gap-3">
                                 <input type="text" placeholder="DNI (Usuario)" value={newDni} onChange={e => setNewDni(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm font-bold" />
-                                <input type="email" placeholder="Mail" value={newMail} onChange={e => setNewMail(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm" />
+                                <input type="email" placeholder="Mail" value={newMail} onChange={e => setNewMail(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm" />
                             </div>
                             <input type="tel" placeholder="Celular (Ej. 1155443322)" value={newCelular} onChange={e => setNewCelular(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm font-medium" />
                             <div className="grid grid-cols-3 gap-2">
@@ -1546,6 +1583,7 @@
                                 <input type="text" placeholder="Nombre (Ej. Dr. Martínez)" value={newMedicoName} onChange={e => setNewMedicoName(e.target.value)} required className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs" />
                                 <input type="text" placeholder="DNI (Usuario)" value={newMedicoDni} onChange={e => setNewMedicoDni(e.target.value)} required className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold" />
                             </div>
+                            <input type="email" placeholder="Mail" value={newMedicoEmail} onChange={e => setNewMedicoEmail(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs" />
                             <div className="flex gap-2">
                                 <input type="text" placeholder="Contraseña (mín. 6 caracteres, 123456 por defecto)" value={newMedicoPassword} onChange={e => setNewMedicoPassword(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs flex-1" />
                                 <button type="submit" className="bg-slate-900 text-white font-bold px-4 rounded-xl text-xs">Crear Cuenta</button>
@@ -1903,6 +1941,48 @@
                 );
             };
 
+            const LinkEmailBanner = ({ dni, onLinked }) => {
+                const [email, setEmail] = useState('');
+                const [status, setStatus] = useState({ type: '', msg: '' });
+                const [isSaving, setIsSaving] = useState(false);
+
+                const handleSubmit = async (e) => {
+                    e.preventDefault();
+                    const clean = normalizeEmail(email);
+                    setIsSaving(true);
+                    setStatus({ type: '', msg: '' });
+                    try {
+                        // Primero el mail de verificación: recién cuando lo confirme,
+                        // Firebase cambia el mail de la cuenta. Hasta entonces sigue
+                        // entrando con su DNI como siempre (ver signInWithDni).
+                        await auth.currentUser.verifyBeforeUpdateEmail(clean);
+                        await db.collection('dniLookup').doc(normalizeDni(dni)).set({ email: clean });
+                        await db.collection('users').doc(dni).update({ email: clean });
+                        onLinked();
+                        alert(`Te mandamos un mail a ${clean}. Abrí el link para confirmarlo y listo.`);
+                    } catch (err) {
+                        setStatus({ type: 'error', msg: err.code === 'auth/requires-recent-login'
+                            ? 'Por seguridad, cerrá sesión, volvé a entrar y probá de nuevo.'
+                            : err.code === 'auth/email-already-in-use' ? 'Ese mail ya está usado por otra cuenta.'
+                            : 'No se pudo guardar el mail. Revisá que esté bien escrito.' });
+                    } finally {
+                        setIsSaving(false);
+                    }
+                };
+
+                return (
+                    <form onSubmit={handleSubmit} className="m-4 mb-0 bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 space-y-2">
+                        <div className="text-xs font-extrabold text-amber-900">📧 Agregá tu mail</div>
+                        <p className="text-[11px] text-amber-800">Tu cuenta no tiene un mail cargado. Sin mail no vas a poder recuperar tu contraseña si te la olvidás.</p>
+                        <div className="flex gap-2">
+                            <input type="email" required placeholder="tu@mail.com" value={email} onChange={e => setEmail(e.target.value)} className="flex-1 min-w-0 bg-white border border-amber-300 rounded-lg p-2 text-xs font-bold outline-none" />
+                            <button type="submit" disabled={isSaving} className="bg-amber-600 text-white font-bold px-3 rounded-lg text-xs shrink-0 disabled:opacity-50">{isSaving ? '...' : 'Guardar'}</button>
+                        </div>
+                        {status.msg && <p className="text-[11px] font-semibold text-rose-700">{status.msg}</p>}
+                    </form>
+                );
+            };
+
             const AuthView = ({ onRegister }) => {
                 const [mode, setMode] = useState('login');
                 const [dni, setDni] = useState('');
@@ -1914,7 +1994,10 @@
                 const [registerMail, setRegisterMail] = useState('');
                 const [registerCelular, setRegisterCelular] = useState('');
                 const [errorMsg, setErrorMsg] = useState('');
+                const [infoMsg, setInfoMsg] = useState('');
                 const [isSubmitting, setIsSubmitting] = useState(false);
+
+                const switchMode = (newMode) => { setMode(newMode); setErrorMsg(''); setInfoMsg(''); };
 
                 // Firebase Auth valida el DNI+contraseña del lado del servidor: acá ya
                 // no se compara ni se guarda ninguna contraseña en texto plano.
@@ -1923,9 +2006,30 @@
                     setErrorMsg('');
                     setIsSubmitting(true);
                     try {
-                        await auth.signInWithEmailAndPassword(dniToPseudoEmail(dni), password);
+                        await signInWithDni(dni, password);
                     } catch (err) {
                         setErrorMsg('DNI o contraseña incorrectos.');
+                    } finally {
+                        setIsSubmitting(false);
+                    }
+                };
+
+                const handleForgotSubmit = async (e) => {
+                    e.preventDefault();
+                    setErrorMsg('');
+                    setInfoMsg('');
+                    setIsSubmitting(true);
+                    try {
+                        const email = await getLoginEmailForDni(dni);
+                        if (!email) {
+                            setErrorMsg('Esta cuenta no tiene un mail registrado. Pedile al administrador que te ayude a recuperar el acceso.');
+                            return;
+                        }
+                        await auth.sendPasswordResetEmail(email);
+                        const [user, domain] = email.split('@');
+                        setInfoMsg(`Te mandamos un link a ${user.slice(0, 2)}***@${domain} para elegir una contraseña nueva. Revisá también la carpeta de spam.`);
+                    } catch (err) {
+                        setErrorMsg('No se pudo enviar el mail. Probá de nuevo en unos minutos.');
                     } finally {
                         setIsSubmitting(false);
                     }
@@ -1936,8 +2040,9 @@
                     setErrorMsg('');
                     setIsSubmitting(true);
 
+                    const email = normalizeEmail(registerMail);
                     const newUser = {
-                        dni: dni.trim(), role: registerRole,
+                        dni: dni.trim(), email, role: registerRole,
                         name: `${registerNombre} ${registerApellido}`.trim(),
                         residentId: registerRole === 'alumno' ? 'r_' + Date.now() : null,
                         doctorName: registerRole === 'medico' ? `${registerNombre} ${registerApellido}` : null,
@@ -1945,15 +2050,23 @@
                     };
 
                     try {
-                        await auth.createUserWithEmailAndPassword(dniToPseudoEmail(dni), password);
+                        if (await getLoginEmailForDni(dni)) {
+                            setErrorMsg('Ese DNI ya está registrado.');
+                            return;
+                        }
+                        const cred = await auth.createUserWithEmailAndPassword(email, password);
+                        await cred.user.sendEmailVerification();
+                        await db.collection('dniLookup').doc(normalizeDni(dni)).set({ email });
                     } catch (err) {
-                        setErrorMsg(err.code === 'auth/email-already-in-use' ? 'Ese DNI ya está registrado.' : 'No se pudo crear la cuenta (la contraseña necesita al menos 6 caracteres).');
-                        setIsSubmitting(false);
+                        setErrorMsg(err.code === 'auth/email-already-in-use' ? 'Ese mail ya está registrado.'
+                            : err.code === 'auth/invalid-email' ? 'El mail no es válido.'
+                            : 'No se pudo crear la cuenta (la contraseña necesita al menos 6 caracteres).');
                         return;
+                    } finally {
+                        setIsSubmitting(false);
                     }
 
-                    onRegister(newUser, { nombre: registerNombre, apellido: registerApellido, dni: dni.trim(), mail: registerMail, celular: registerCelular, tipo: registerTipo });
-                    setIsSubmitting(false);
+                    onRegister(newUser, { nombre: registerNombre, apellido: registerApellido, dni: dni.trim(), mail: email, celular: registerCelular, tipo: registerTipo });
                 };
 
                 return (
@@ -1964,17 +2077,31 @@
                                 <h1 className="text-xl font-black text-slate-900">Escuelita Bicentenario Log</h1>
                             </div>
                             {errorMsg && <div className="bg-rose-50 border border-rose-200 text-rose-700 text-xs p-3 rounded-xl font-semibold">{errorMsg}</div>}
+                            {infoMsg && <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs p-3 rounded-xl font-semibold">{infoMsg}</div>}
 
-                            <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl text-xs font-bold">
-                                <button type="button" onClick={() => { setMode('login'); setErrorMsg(''); }} className={`py-2.5 rounded-lg ${mode === 'login' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Iniciar Sesión</button>
-                                <button type="button" onClick={() => { setMode('register'); setErrorMsg(''); }} className={`py-2.5 rounded-lg ${mode === 'register' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Registrarse</button>
-                            </div>
+                            {mode !== 'forgot' && (
+                                <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl text-xs font-bold">
+                                    <button type="button" onClick={() => switchMode('login')} className={`py-2.5 rounded-lg ${mode === 'login' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Iniciar Sesión</button>
+                                    <button type="button" onClick={() => switchMode('register')} className={`py-2.5 rounded-lg ${mode === 'register' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Registrarse</button>
+                                </div>
+                            )}
 
-                            {mode === 'login' ? (
+                            {mode === 'forgot' ? (
+                                <form onSubmit={handleForgotSubmit} className="space-y-4">
+                                    <div>
+                                        <h2 className="font-bold text-slate-800 text-sm">Recuperar contraseña</h2>
+                                        <p className="text-xs text-slate-500 mt-1">Ingresá tu DNI y te mandamos un link al mail que registraste.</p>
+                                    </div>
+                                    <input type="text" placeholder="DNI" value={dni} onChange={e => setDni(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-bold outline-none" />
+                                    <button type="submit" disabled={isSubmitting} className="w-full bg-blue-600 text-white font-bold p-4 rounded-xl text-xs disabled:opacity-50">{isSubmitting ? 'Enviando...' : 'Enviar link de recuperación'}</button>
+                                    <button type="button" onClick={() => switchMode('login')} className="w-full text-xs font-bold text-slate-500">← Volver a iniciar sesión</button>
+                                </form>
+                            ) : mode === 'login' ? (
                                 <form onSubmit={handleLoginSubmit} className="space-y-4">
                                     <input type="text" placeholder="DNI (Usuario)" value={dni} onChange={e => setDni(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-bold outline-none" />
                                     <input type="password" placeholder="Contraseña" value={password} onChange={e => setPassword(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-bold outline-none" />
                                     <button type="submit" disabled={isSubmitting} className="w-full bg-blue-600 text-white font-bold p-4 rounded-xl text-xs disabled:opacity-50">{isSubmitting ? 'Ingresando...' : 'Ingresar al Sistema'}</button>
+                                    <button type="button" onClick={() => switchMode('forgot')} className="w-full text-xs font-bold text-blue-600">¿Olvidaste tu contraseña?</button>
                                 </form>
                             ) : (
                                 <form onSubmit={handleRegisterSubmit} className="space-y-3">
@@ -1990,11 +2117,12 @@
                                         <input type="text" placeholder="Nombre" value={registerNombre} onChange={e => setRegisterNombre(e.target.value)} required className="w-full bg-slate-50 border rounded-xl p-2.5 text-sm" />
                                         <input type="text" placeholder="Apellido" value={registerApellido} onChange={e => setRegisterApellido(e.target.value)} required className="w-full bg-slate-50 border rounded-xl p-2.5 text-sm" />
                                     </div>
+                                    <div>
+                                        <input type="email" placeholder="Mail (para recuperar tu contraseña)" value={registerMail} onChange={e => setRegisterMail(e.target.value)} required className="w-full bg-slate-50 border rounded-xl p-2.5 text-sm" />
+                                        <p className="text-[10px] text-slate-400 mt-1">Te vamos a mandar un mail para confirmar que funciona.</p>
+                                    </div>
                                     {registerRole === 'alumno' && (
-                                        <div className="grid grid-cols-2 gap-2">
-                                            <input type="email" placeholder="Mail" value={registerMail} onChange={e => setRegisterMail(e.target.value)} className="w-full bg-slate-50 border rounded-xl p-2.5 text-sm" />
-                                            <input type="tel" placeholder="Celular" value={registerCelular} onChange={e => setRegisterCelular(e.target.value)} className="w-full bg-slate-50 border rounded-xl p-2.5 text-sm" />
-                                        </div>
+                                        <input type="tel" placeholder="Celular" value={registerCelular} onChange={e => setRegisterCelular(e.target.value)} className="w-full bg-slate-50 border rounded-xl p-2.5 text-sm" />
                                     )}
                                     <input type="text" placeholder="DNI (Será su Usuario)" value={dni} onChange={e => setDni(e.target.value)} required className="w-full bg-slate-50 border rounded-xl p-2.5 text-sm font-bold" />
                                     <input type="password" placeholder="Contraseña (mín. 6 caracteres)" value={password} onChange={e => setPassword(e.target.value)} required minLength={6} className="w-full bg-slate-50 border rounded-xl p-2.5 text-sm font-bold" />
@@ -2074,7 +2202,8 @@
                 // perfil en Firestore (ya no hay contraseñas guardadas ni comparadas a mano).
                 useEffect(() => {
                     if (!authUser) { setCurrentUser(null); return; }
-                    const match = systemUsers.find(u => dniToPseudoEmail(u.dni) === authUser.email);
+                    const authEmail = normalizeEmail(authUser.email);
+                    const match = systemUsers.find(u => normalizeEmail(u.email) === authEmail || dniToPseudoEmail(u.dni) === authEmail);
                     if (match) setCurrentUser(match);
                 }, [authUser, systemUsers]);
 
@@ -2099,6 +2228,14 @@
                     if (!currentUser) return;
                     setActiveTab(currentUser.role === 'medico' ? 'medico_planta' : currentUser.role === 'admin' ? 'admin' : 'dashboard');
                 }, [currentUser?.dni]);
+
+                // Cuentas creadas antes de pedir mail: se les ofrece vincular uno para
+                // poder recuperar la contraseña.
+                const [needsEmailLink, setNeedsEmailLink] = useState(false);
+                useEffect(() => {
+                    if (!currentUser || !authUser || !isPseudoEmail(authUser.email)) { setNeedsEmailLink(false); return; }
+                    getLoginEmailForDni(currentUser.dni).then(email => setNeedsEmailLink(!email)).catch(() => setNeedsEmailLink(false));
+                }, [currentUser?.dni, authUser]);
 
                 const isCurrentDisabled = useMemo(() => {
                     if (!currentUser) return false;
@@ -2191,26 +2328,27 @@
 
                 const handleAddResident = async (newRes) => {
                     try {
-                        await createAuthAccountWithoutSignIn(newRes.dni, '123456');
+                        await createAuthAccountWithoutSignIn(newRes.dni, newRes.mail, '123456');
                     } catch (err) {
                         alert('No se pudo crear el acceso del alumno: ' + err.message);
                         return;
                     }
                     db.collection('residents').doc(newRes.id).set(newRes);
                     db.collection('users').doc(newRes.dni).set({
-                        dni: newRes.dni, role: 'alumno', name: `${newRes.nombre} ${newRes.apellido}`, residentId: newRes.id, disabled: false
+                        dni: newRes.dni, email: normalizeEmail(newRes.mail), role: 'alumno', name: `${newRes.nombre} ${newRes.apellido}`, residentId: newRes.id, disabled: false
                     });
                 };
 
                 const handleAddMedicoPlanta = async (medicoData) => {
                     try {
-                        await createAuthAccountWithoutSignIn(medicoData.dni, medicoData.password);
+                        await createAuthAccountWithoutSignIn(medicoData.dni, medicoData.email, medicoData.password);
                     } catch (err) {
                         alert('No se pudo crear el acceso del médico: ' + err.message);
                         return;
                     }
                     db.collection('users').doc(medicoData.dni).set({
                         dni: medicoData.dni,
+                        email: normalizeEmail(medicoData.email),
                         role: 'medico',
                         name: medicoData.name,
                         disabled: false
@@ -2289,6 +2427,7 @@
                             </div>
                         </header>
 
+                        {needsEmailLink && <LinkEmailBanner dni={currentUser.dni} onLinked={() => setNeedsEmailLink(false)} />}
                         <main className="flex-grow">
                             {currentUser.role === 'medico' && activeTab === 'medico_planta' && <MedicoPlantaView currentStaffDoctor={activeStaffDoctor} residents={residents} logs={logs} evaluations={evaluations} onSaveEvaluation={handleSaveEvaluation} onToggleAnularLog={handleToggleAnularLog} activeRole={currentUser.role} procedures={procedures} onAddProcedure={handleAddProcedure} medicosPlanta={medicosPlanta} onAssignResident={handleAssignResident} config={config} />}
                             {activeTab === 'dashboard' && currentUser.role === 'alumno' && <DashboardView currentResident={activeResident} currentMonthYYYYMM={currentMonthYYYYMM} logs={logs} evaluations={evaluations} procedures={procedures} onUpdateProfile={handleUpdateOwnProfile} medicosPlanta={medicosPlanta} config={config} />}
